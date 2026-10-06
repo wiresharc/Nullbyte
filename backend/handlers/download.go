@@ -56,13 +56,17 @@ func (h *DownloadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	meta.Downloads++
-	if meta.Downloads >= meta.MaxDownloads {
-		h.store.Delete(token)
-	} else {
+	exhausted := meta.Downloads >= meta.MaxDownloads
+	if !exhausted {
 		h.store.Save(token, *meta)
 	}
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment; filename=\"file.bin\"")
 	http.ServeFile(w, r, filePath)
+
+	// burn after the bytes are written, never before
+	if exhausted {
+		h.store.Delete(token)
+	}
 }

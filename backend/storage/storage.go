@@ -32,9 +32,11 @@ func NewStore(uploadDir string, maxBytes int64) *Store {
 func (s *Store) Save(token string, data models.FileMetadata) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.save(token, data)
+}
 
-	metaPath := s.metaPath(token)
-	f, err := os.Create(metaPath)
+func (s *Store) save(token string, data models.FileMetadata) error {
+	f, err := os.Create(s.metaPath(token))
 	if err != nil {
 		return err
 	}
@@ -47,9 +49,11 @@ func (s *Store) Save(token string, data models.FileMetadata) error {
 func (s *Store) Load(token string) (*models.FileMetadata, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.load(token)
+}
 
-	metaPath := s.metaPath(token)
-	f, err := os.Open(metaPath)
+func (s *Store) load(token string) (*models.FileMetadata, error) {
+	f, err := os.Open(s.metaPath(token))
 	if err != nil {
 		return nil, err
 	}
@@ -66,8 +70,11 @@ func (s *Store) Load(token string) (*models.FileMetadata, error) {
 func (s *Store) Delete(token string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.delete(token)
+}
 
-	meta, err := s.Load(token)
+func (s *Store) delete(token string) error {
+	meta, err := s.load(token)
 	if err != nil {
 		return err
 	}

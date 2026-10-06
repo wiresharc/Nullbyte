@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"file2file/middleware"
 	"file2file/models"
 	"file2file/storage"
 )
@@ -34,6 +35,10 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer r.MultipartForm.RemoveAll()
+
+	if !middleware.ValidateUpload(w, r) {
+		return
+	}
 
 	file, header, err := r.FormFile("file")
 	if err != nil {

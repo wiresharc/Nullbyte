@@ -17,6 +17,7 @@ export default function Upload() {
   const [captchaVerified, setCaptchaVerified] = useState(false)
   const [captchaToken, setCaptchaToken] = useState(null)
   const fileInputRef = useRef(null)
+  const honeypotRef = useRef(null)
 
   const handleFile = useCallback((f) => {
     if (!f) return
@@ -72,7 +73,7 @@ export default function Upload() {
       formData.append('file', fileData)
       formData.append('downloads', downloadMode)
       formData.append('captcha_token', captchaToken || '')
-      formData.append('website', '')
+      formData.append('website', honeypotRef.current?.value || '')
 
       const xhr = new XMLHttpRequest()
 
@@ -91,7 +92,7 @@ export default function Upload() {
           }
         })
         xhr.addEventListener('error', () => reject(new Error('network error')))
-        xhr.open('POST', `${import.meta.env.VITE_API_URL || ''}/api/upload`)
+        xhr.open('POST', `${import.meta.env.CB_API_URL || ''}/api/upload`)
         xhr.send(formData)
       })
 
@@ -260,6 +261,15 @@ export default function Upload() {
         {file && !uploading && !encrypting && (
           <div className="text-center mb-8">
             <div className="glass p-4 mb-4 max-w-md mx-auto">
+              <input
+                ref={honeypotRef}
+                type="text"
+                name="website"
+                tabIndex={-1}
+                autoComplete="off"
+                aria-hidden="true"
+                className="hidden"
+              />
               <label className="flex items-center gap-3 cursor-pointer">
                 <input
                   type="checkbox"
@@ -267,7 +277,7 @@ export default function Upload() {
                   onChange={async (e) => {
                     if (e.target.checked && !captchaToken) {
                       try {
-                        const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/captcha/token`)
+                        const res = await fetch(`${import.meta.env.CB_API_URL || ''}/api/captcha/token`)
                         const data = await res.json()
                         setCaptchaToken(data.token)
                       } catch (err) {

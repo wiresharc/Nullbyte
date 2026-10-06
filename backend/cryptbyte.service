@@ -1,0 +1,14 @@
+[Unit]
+Description=cryptbyte file sharing backend
+After=network.target
+
+[Service]
+Type=simple
+User=aksh
+WorkingDirectory=/home/aksh/Akshat/Programming/WebDevelopment/cryptbyte/backend
+ExecStart=/home/aksh/Akshat/Programming/WebDevelopment/cryptbyte/backend/cryptbyte
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

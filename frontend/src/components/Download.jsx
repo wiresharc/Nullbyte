@@ -20,7 +20,7 @@ export default function Download() {
 
   const fetchFileInfo = async () => {
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/info/${token}`)
+      const res = await fetch(`${import.meta.env.CB_API_URL || ''}/api/info/${token}`)
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
         throw new Error(err.error || 'file not found or expired')
@@ -38,7 +38,7 @@ export default function Download() {
     setDecryptProgress(0)
 
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/download/${token}`)
+      const response = await fetch(`${import.meta.env.CB_API_URL || ''}/api/download/${token}`)
       if (!response.ok) throw new Error('download failed')
 
       const contentLength = +response.headers.get('Content-Length')

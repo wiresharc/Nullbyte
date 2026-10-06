@@ -4,59 +4,58 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
+	"sync"
 	"time"
 )
 
-var captchaTokens = make(map[string]bool)
-
-func Captcha(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		if r.URL.Path == "/api/captcha/token" {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "invalid form", http.StatusBadRequest)
-			return
-		}
-
-		honeypot := r.FormValue("website")
-		if honeypot != "" {
-			http.Error(w, "bot detected", http.StatusForbidden)
-			return
-		}
-
-		captchaToken := r.FormValue("captcha_token")
-		if captchaToken == "" {
-			http.Error(w, "captcha required", http.StatusForbidden)
-			return
-		}
-
-		if !captchaTokens[captchaToken] {
-			http.Error(w, "invalid captcha", http.StatusForbidden)
-			return
-		}
-
-		delete(captchaTokens, captchaToken)
-
-		next.ServeHTTP(w, r)
-	})
-}
+var (
+	captchaMu     sync.Mutex
+	captchaTokens = make(map[string]bool)
+)
 
 func GenerateCaptchaToken() string {
 	b := make([]byte, 16)
 	rand.Read(b)
 	token := hex.EncodeToString(b)
+
+	captchaMu.Lock()
 	captchaTokens[token] = true
+	captchaMu.Unlock()
+
 	go func() {
 		time.Sleep(5 * time.Minute)
+		captchaMu.Lock()
 		delete(captchaTokens, token)
+		captchaMu.Unlock()
 	}()
+
 	return token
+}
+
+// must run after the multipart form has been parsed
+func ValidateUpload(w http.ResponseWriter, r *http.Request) bool {
+	if r.FormValue("website") != "" {
+		http.Error(w, "bot detected", http.StatusForbidden)
+		return false
+	}
+
+	token := r.FormValue("captcha_token")
+	if token == "" {
+		http.Error(w, "captcha required", http.StatusForbidden)
+		return false
+	}
+
+	captchaMu.Lock()
+	valid := captchaTokens[token]
+	if valid {
+		delete(captchaTokens, token)
+	}
+	captchaMu.Unlock()
+
+	if !valid {
+		http.Error(w, "invalid captcha", http.StatusForbidden)
+		return false
+	}
+
+	return true
 }

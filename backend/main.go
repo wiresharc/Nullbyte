@@ -43,7 +43,6 @@ func main() {
 	var handler http.Handler = mux
 	handler = middleware.Logging(handler)
 	handler = middleware.RateLimit(handler, 20, 60)
-	handler = middleware.Captcha(handler)
 	handler = middleware.CORS(handler)
 
 	// workin on a weeknd like usual
