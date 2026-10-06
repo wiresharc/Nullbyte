@@ -438,44 +438,63 @@ function UploadProgress({ stats }) {
     )
   }
 
-  const percent = stats.total ? Math.min(100, Math.round((stats.loaded / stats.total) * 100)) : 0
-  const chunkPercent = stats.chunkTotal
-    ? Math.min(100, Math.round((stats.chunkLoaded / stats.chunkTotal) * 100))
+  const current = stats.chunks[stats.chunkIndex]
+  const currentPercent = current && current.total
+    ? Math.min(100, Math.round((current.loaded / current.total) * 100))
     : 0
 
-  const segments = []
-  for (let i = 0; i < stats.totalParts; i++) {
-    let fill = 0
-    if (i < stats.chunkIndex) fill = 100
-    else if (i === stats.chunkIndex) fill = chunkPercent
-    segments.push(
-      <div key={i} className="flex-1 h-1.5 rounded-full bg-surface-700 overflow-hidden">
-        <div
-          className="h-full bg-red-500 rounded-full transition-all duration-200 ease-out"
-          style={{ width: `${fill}%` }}
-        />
-      </div>
-    )
-  }
+  const visible = stats.chunks.slice(0, 8)
+  const hidden = stats.chunks.length - visible.length
 
   return (
     <div>
-      <div className="flex justify-between text-sm mb-2">
+      <div className="flex justify-between text-sm mb-3">
         <span className="text-gray-400">
           uploading chunk {stats.chunkIndex + 1} of {stats.totalParts}
         </span>
-        <span className="text-red-400">{percent}%</span>
+        <span className="text-red-400">{currentPercent}%</span>
       </div>
 
-      <div className="progress-bar">
-        <div className="progress-fill" style={{ width: `${percent}%` }} />
+      <div className="space-y-2.5">
+        {visible.map((chunk, i) => {
+          const percent = chunk.total ? Math.min(100, Math.round((chunk.loaded / chunk.total) * 100)) : 0
+          const isActive = i === stats.chunkIndex
+          const isDone = i < stats.chunkIndex
+
+          let label = `chunk ${i + 1}`
+          if (isDone) label = `chunk ${i + 1} done`
+          else if (isActive) label = `chunk ${i + 1} uploading`
+
+          return (
+            <div key={i}>
+              <div className="flex justify-between text-xs mb-1">
+                <span className={isActive ? 'text-red-400' : isDone ? 'text-gray-500' : 'text-gray-600'}>
+                  {label}
+                </span>
+                <span className={isActive ? 'text-red-400' : isDone ? 'text-gray-500' : 'text-gray-600'}>
+                  {percent}%
+                </span>
+              </div>
+              <div className="h-1.5 bg-surface-700 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-150 ease-out ${
+                    isDone ? 'bg-red-500/50' : isActive ? 'bg-red-500' : 'bg-transparent'
+                  }`}
+                  style={{ width: `${percent}%` }}
+                />
+              </div>
+            </div>
+          )
+        })}
+
+        {hidden > 0 && (
+          <p className="text-xs text-gray-600 text-center">
+            + {hidden} more chunk{hidden === 1 ? '' : 's'}
+          </p>
+        )}
       </div>
 
-      {stats.totalParts > 1 && (
-        <div className="flex gap-1 mt-2">{segments}</div>
-      )}
-
-      <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 mt-3 text-xs text-gray-500">
+      <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 mt-4 pt-3 border-t border-white/5 text-xs text-gray-500">
         <span>{formatBytes(stats.loaded)} of {formatBytes(stats.total)}</span>
         {stats.rate > 0 && <span>{formatBytes(stats.rate)}/s</span>}
         <span>{formatDuration(stats.elapsedMs)} elapsed</span>

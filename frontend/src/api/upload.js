@@ -33,13 +33,23 @@ export async function uploadBlob(blob, opts) {
   const totalSize = blob.size
   const totalParts = Math.max(1, Math.ceil(totalSize / CHUNK_SIZE))
 
+  const sizes = []
+  for (let i = 0; i < totalParts; i++) {
+    const start = i * CHUNK_SIZE
+    sizes.push(Math.min(CHUNK_SIZE, totalSize - start))
+  }
+
+  const chunkLoaded = new Array(totalParts).fill(0)
+  const chunkStartedAt = new Array(totalParts).fill(null)
+  const chunkDoneAt = new Array(totalParts).fill(null)
+
   const startedAt = Date.now()
   let uploaded = 0
   let rate = 0
   let lastTick = startedAt
   let lastBytes = 0
 
-  function report(chunkIndex, chunkLoaded, chunkTotal, totalLoaded) {
+  function report(chunkIndex, totalLoaded) {
     const now = Date.now()
     const done = Math.min(totalLoaded, totalSize)
 
@@ -51,20 +61,25 @@ export async function uploadBlob(blob, opts) {
     }
 
     const remaining = totalSize - done
+
     onProgress?.({
       loaded: done,
       total: totalSize,
       chunkIndex,
       totalParts,
-      chunkLoaded,
-      chunkTotal,
       rate,
       elapsedMs: now - startedAt,
       etaMs: rate > 0 ? (remaining / rate) * 1000 : null,
+      chunks: sizes.map((size, i) => ({
+        loaded: chunkLoaded[i],
+        total: size,
+        startedAt: chunkStartedAt[i],
+        doneAt: chunkDoneAt[i],
+      })),
     })
   }
 
-  report(0, 0, Math.min(CHUNK_SIZE, totalSize), 0)
+  report(0, 0)
 
   if (totalParts === 1) {
     const formData = new FormData()
@@ -74,7 +89,14 @@ export async function uploadBlob(blob, opts) {
     formData.append('website', honeypot || '')
     formData.append('file', blob, filename)
 
-    return sendChunk(url, formData, (loaded) => report(0, loaded, totalSize, loaded))
+    chunkStartedAt[0] = startedAt
+    const res = await sendChunk(url, formData, (loaded) => {
+      chunkLoaded[0] = loaded
+      report(0, loaded)
+    })
+    chunkLoaded[0] = totalSize
+    chunkDoneAt[0] = Date.now()
+    return res
   }
 
   let token = null
@@ -98,14 +120,21 @@ export async function uploadBlob(blob, opts) {
     formData.append('file', slice, `${filename}.part${i}`)
 
     const base = uploaded
-    const res = await sendChunk(url, formData, (loaded) => report(i, loaded, slice.size, base + loaded))
+    chunkStartedAt[i] = Date.now()
 
+    const res = await sendChunk(url, formData, (loaded) => {
+      chunkLoaded[i] = loaded
+      report(i, base + loaded)
+    })
+
+    chunkLoaded[i] = slice.size
+    chunkDoneAt[i] = Date.now()
     uploaded = base + slice.size
 
     if (res.upload_id) uploadId = res.upload_id
     if (res.token) token = res.token
 
-    report(i, slice.size, slice.size, uploaded)
+    report(i, uploaded)
 
     if (res.done) return res
   }
