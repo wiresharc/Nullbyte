@@ -3,33 +3,49 @@ package middleware
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"sync"
 	"time"
+
+	"file2file/storage"
 )
+
+const captchaTokenTTL = 5 * time.Minute
+const maxCaptchaTokens = 50000
 
 var (
 	captchaMu     sync.Mutex
-	captchaTokens = make(map[string]bool)
+	captchaTokens = make(map[string]time.Time)
 )
 
-func GenerateCaptchaToken() string {
+func sweepCaptchaLocked(now time.Time) {
+	for token, exp := range captchaTokens {
+		if now.After(exp) {
+			delete(captchaTokens, token)
+		}
+	}
+}
+
+func GenerateCaptchaToken() (string, error) {
 	b := make([]byte, 16)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+
 	token := hex.EncodeToString(b)
+	now := time.Now()
 
 	captchaMu.Lock()
-	captchaTokens[token] = true
+	sweepCaptchaLocked(now)
+	if len(captchaTokens) >= maxCaptchaTokens {
+		captchaMu.Unlock()
+		return "", errors.New("captcha capacity reached")
+	}
+	captchaTokens[token] = now.Add(captchaTokenTTL)
 	captchaMu.Unlock()
 
-	go func() {
-		time.Sleep(5 * time.Minute)
-		captchaMu.Lock()
-		delete(captchaTokens, token)
-		captchaMu.Unlock()
-	}()
-
-	return token
+	return token, nil
 }
 
 // must run after the multipart form has been parsed
@@ -45,14 +61,19 @@ func ValidateUpload(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 
+	if !storage.ValidToken(token) {
+		http.Error(w, "invalid captcha", http.StatusForbidden)
+		return false
+	}
+
 	captchaMu.Lock()
-	valid := captchaTokens[token]
-	if valid {
+	exp, ok := captchaTokens[token]
+	if ok {
 		delete(captchaTokens, token)
 	}
 	captchaMu.Unlock()
 
-	if !valid {
+	if !ok || time.Now().After(exp) {
 		http.Error(w, "invalid captcha", http.StatusForbidden)
 		return false
 	}

@@ -24,8 +24,8 @@ func (h *InfoHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	token := strings.TrimPrefix(r.URL.Path, "/api/info/")
-	if token == "" {
-		http.Error(w, "token required", http.StatusBadRequest)
+	if !storage.ValidToken(token) {
+		http.Error(w, "invalid token", http.StatusBadRequest)
 		return
 	}
 

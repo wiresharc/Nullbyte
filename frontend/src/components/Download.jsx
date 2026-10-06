@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
-import { importKey, decryptFile, downloadBlob } from '../crypto/encryption'
+import { importKey, decryptFile, downloadBlob, concatChunks, readHeader } from '../crypto/encryption'
 
 export default function Download() {
   const { token } = useParams()
@@ -26,6 +26,9 @@ export default function Download() {
         throw new Error(err.error || 'file not found or expired')
       }
       const data = await res.json()
+      if (data.encrypted && !encryptionKey) {
+        throw new Error('this file is encrypted. the decryption key is missing from the link.')
+      }
       setFileInfo(data)
     } catch (err) {
       setError(err.message)
@@ -69,10 +72,17 @@ export default function Download() {
           setDecryptProgress(p)
         })
 
-        const originalName = fileInfo?.original_name || 'downloaded_file'
-        const mimeType = fileInfo?.file_type || 'application/octet-stream'
+        const parsed = readHeader(concatChunks(decryptedChunks))
 
-        downloadBlob(decryptedChunks, originalName, mimeType)
+        if (parsed) {
+          downloadBlob(
+            [parsed.data],
+            parsed.name || 'downloaded_file',
+            parsed.type || 'application/octet-stream'
+          )
+        } else {
+          downloadBlob(decryptedChunks, 'downloaded_file', 'application/octet-stream')
+        }
       } else {
         const blob = new Blob([encryptedData])
         const url = URL.createObjectURL(blob)

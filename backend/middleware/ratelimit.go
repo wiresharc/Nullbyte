@@ -1,11 +1,16 @@
 package middleware
 
 import (
-	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
+
+type visitor struct {
+	count    int
+	lastSeen time.Time
+}
 
 type rateLimiter struct {
 	mu       sync.Mutex
@@ -14,10 +19,7 @@ type rateLimiter struct {
 	window   time.Duration
 }
 
-type visitor struct {
-	count    int
-	lastSeen time.Time
-}
+const maxTrackedVisitors = 100000
 
 func newRateLimiter(rate int, window time.Duration) *rateLimiter {
 	rl := &rateLimiter{
@@ -43,19 +45,35 @@ func (rl *rateLimiter) cleanup() {
 	}
 }
 
+func (rl *rateLimiter) evictLocked(now time.Time) {
+	for ip, v := range rl.visitors {
+		if now.Sub(v.lastSeen) > rl.window*2 {
+			delete(rl.visitors, ip)
+		}
+	}
+}
+
 func (rl *rateLimiter) allow(ip string) bool {
+	now := time.Now()
+
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
 	v, exists := rl.visitors[ip]
 	if !exists {
-		rl.visitors[ip] = &visitor{count: 1, lastSeen: time.Now()}
+		if len(rl.visitors) >= maxTrackedVisitors {
+			rl.evictLocked(now)
+			if len(rl.visitors) >= maxTrackedVisitors {
+				return false
+			}
+		}
+		rl.visitors[ip] = &visitor{count: 1, lastSeen: now}
 		return true
 	}
 
-	if time.Since(v.lastSeen) > rl.window {
+	if now.Sub(v.lastSeen) > rl.window {
 		v.count = 1
-		v.lastSeen = time.Now()
+		v.lastSeen = now
 		return true
 	}
 
@@ -67,12 +85,41 @@ func (rl *rateLimiter) allow(ip string) bool {
 	return true
 }
 
-func RateLimit(next http.Handler, rate int, windowSeconds int) http.Handler {
-	rl := newRateLimiter(rate, time.Duration(windowSeconds)*time.Second)
+type limitRule struct {
+	prefix string
+	rate   int
+	window time.Duration
+}
 
+var defaultRule = limitRule{rate: 60, window: time.Minute}
+
+var rules = []limitRule{
+	{prefix: "/api/upload", rate: 4, window: time.Minute},
+	{prefix: "/api/captcha/token", rate: 20, window: time.Minute},
+	{prefix: "/api/info/", rate: 20, window: time.Minute},
+}
+
+var limiters = map[limitRule]*rateLimiter{}
+
+func init() {
+	limiters[defaultRule] = newRateLimiter(defaultRule.rate, defaultRule.window)
+	for _, r := range rules {
+		limiters[r] = newRateLimiter(r.rate, r.window)
+	}
+}
+
+func limiterFor(path string) *rateLimiter {
+	for _, r := range rules {
+		if strings.HasPrefix(path, r.prefix) {
+			return limiters[r]
+		}
+	}
+	return limiters[defaultRule]
+}
+
+func RateLimit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
-		if !rl.allow(ip) {
+		if !limiterFor(r.URL.Path).allow(ClientIP(r)) {
 			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}

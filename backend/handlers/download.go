@@ -25,8 +25,8 @@ func (h *DownloadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	// extract token from path
 	token := strings.TrimPrefix(r.URL.Path, "/api/download/")
-	if token == "" {
-		http.Error(w, "token required", http.StatusBadRequest)
+	if !storage.ValidToken(token) {
+		http.Error(w, "invalid token", http.StatusBadRequest)
 		return
 	}
 

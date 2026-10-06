@@ -1,7 +1,10 @@
 # Backend
 backend/uploads/
 backend/file2file
+backend/Nullbyte
+backend/cryptbyte
 backend/requests.jsonl
+backend/logs/
 
 # Frontend
 frontend/node_modules/

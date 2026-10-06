@@ -61,7 +61,7 @@ export default function Upload() {
         const { keyBytes, baseNonce, cryptoKey } = await generateKeyMaterial()
         const encryptedChunks = await encryptFile(file, cryptoKey, baseNonce, (p) => {
           setEncryptProgress(p)
-        })
+        }, file.name, file.type)
 
         const encryptedBlob = new Blob(encryptedChunks)
         fileData = new File([encryptedBlob], file.name + '.encrypted', { type: 'application/octet-stream' })
@@ -114,6 +114,8 @@ export default function Upload() {
 
     } catch (err) {
       setError(err.message || 'upload failed')
+      setCaptchaToken(null)
+      setCaptchaVerified(false)
     }
     setUploading(false)
   }

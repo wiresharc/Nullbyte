@@ -6,27 +6,64 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"file2file/models"
 )
+
+const orphanGracePeriod = 2 * time.Hour
 
 type Store struct {
 	uploadDir   string
 	maxBytes    int64
 	mu          sync.RWMutex
 	metadataDir string
+	usage       atomic.Int64
 }
 
 func NewStore(uploadDir string, maxBytes int64) *Store {
 	metaDir := filepath.Join(uploadDir, ".meta")
 	os.MkdirAll(metaDir, 0755)
-	return &Store{
+	s := &Store{
 		uploadDir:   uploadDir,
 		maxBytes:    maxBytes,
 		metadataDir: metaDir,
 	}
+	s.usage.Store(dirSize(uploadDir))
+	return s
+}
+
+func ValidToken(token string) bool {
+	if len(token) != 32 {
+		return false
+	}
+	for i := 0; i < len(token); i++ {
+		c := token[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func dirSize(dir string) int64 {
+	var total int64
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if info, err := entry.Info(); err == nil {
+			total += info.Size()
+		}
+	}
+	return total
 }
 
 func (s *Store) Save(token string, data models.FileMetadata) error {
@@ -44,6 +81,10 @@ func (s *Store) save(token string, data models.FileMetadata) error {
 
 	enc := json.NewEncoder(f)
 	return enc.Encode(data)
+}
+
+func (s *Store) AddUsage(n int64) {
+	s.usage.Add(n)
 }
 
 func (s *Store) Load(token string) (*models.FileMetadata, error) {
@@ -69,74 +110,96 @@ func (s *Store) load(token string) (*models.FileMetadata, error) {
 
 func (s *Store) Delete(token string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.delete(token)
+	freed, err := s.delete(token)
+	s.mu.Unlock()
+
+	if err == nil {
+		s.usage.Add(-freed)
+	}
+	return err
 }
 
-func (s *Store) delete(token string) error {
+func (s *Store) delete(token string) (int64, error) {
 	meta, err := s.load(token)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	os.Remove(filepath.Join(s.uploadDir, meta.StoredName))
 	os.Remove(s.metaPath(token))
-	return nil
+	return meta.Size, nil
 }
 
 func (s *Store) CleanupExpired() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	entries, err := os.ReadDir(s.metadataDir)
+	if err != nil {
+		return
+	}
 
-	entries, _ := os.ReadDir(s.metadataDir)
+	referenced := make(map[string]struct{}, len(entries))
+	var expired []string
+
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 
-		metaPath := filepath.Join(s.metadataDir, entry.Name())
+		token := strings.TrimSuffix(entry.Name(), ".json")
+		if !ValidToken(token) {
+			continue
+		}
 
-		f, err := os.Open(metaPath)
+		meta, err := s.Load(token)
 		if err != nil {
 			continue
 		}
 
-		var meta models.FileMetadata
-		dec := json.NewDecoder(f)
-		if err := dec.Decode(&meta); err != nil {
-			f.Close()
+		referenced[meta.StoredName] = struct{}{}
+
+		if meta.IsExpired() {
+			expired = append(expired, token)
+		}
+	}
+
+	for _, token := range expired {
+		s.Delete(token)
+	}
+
+	s.reclaimOrphans(referenced)
+	s.usage.Store(dirSize(s.uploadDir))
+}
+
+func (s *Store) reclaimOrphans(referenced map[string]struct{}) {
+	blobs, err := os.ReadDir(s.uploadDir)
+	if err != nil {
+		return
+	}
+
+	cutoff := time.Now().Add(-orphanGracePeriod)
+
+	for _, blob := range blobs {
+		if blob.IsDir() {
 			continue
 		}
-		f.Close()
-
-		if time.Now().After(meta.ExpiresAt) {
-			os.Remove(filepath.Join(s.uploadDir, meta.StoredName))
-			os.Remove(metaPath)
+		if _, ok := referenced[blob.Name()]; ok {
+			continue
 		}
+
+		info, err := blob.Info()
+		if err != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+
+		os.Remove(filepath.Join(s.uploadDir, blob.Name()))
 	}
 }
 
 func (s *Store) CurrentUsage() int64 {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	var total int64
-	entries, _ := os.ReadDir(s.uploadDir)
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-		total += info.Size()
-	}
-	return total
+	return s.usage.Load()
 }
 
 func (s *Store) HasSpace(needed int64) bool {
-	return s.CurrentUsage()+needed <= s.maxBytes
+	return s.usage.Load()+needed <= s.maxBytes
 }
 
 func (s *Store) metaPath(token string) string {
@@ -157,7 +220,6 @@ func DetectFileType(data []byte) string {
 		return "application/octet-stream"
 	}
 
-	// magic bytes detection
 	if data[0] == 0x25 && data[1] == 0x50 && data[2] == 0x44 && data[3] == 0x46 {
 		return "application/pdf"
 	}

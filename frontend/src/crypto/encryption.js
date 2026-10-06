@@ -1,4 +1,5 @@
 const CHUNK_SIZE = 4 * 1024 * 1024;
+const HEADER_MAGIC = 0x4e423031;
 
 export async function generateKeyMaterial() {
   const keyBytes = crypto.getRandomValues(new Uint8Array(32));
@@ -23,18 +24,68 @@ function deriveIV(baseNonce, chunkIndex) {
   return iv;
 }
 
-export async function encryptFile(file, cryptoKey, baseNonce, onProgress) {
-  const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+function chunkAAD(chunkIndex) {
+  const aad = new Uint8Array(4);
+  new DataView(aad.buffer).setUint32(0, chunkIndex, false);
+  return aad;
+}
+
+export function buildHeader(name, type) {
+  const meta = new TextEncoder().encode(JSON.stringify({ n: name || '', t: type || '' }));
+  const out = new Uint8Array(8 + meta.length);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, HEADER_MAGIC, false);
+  view.setUint32(4, meta.length, false);
+  out.set(meta, 8);
+  return out;
+}
+
+export function concatChunks(chunks) {
+  let total = 0;
+  for (const chunk of chunks) total += chunk.length;
+
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
+export function readHeader(bytes) {
+  if (bytes.length < 8) return null;
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint32(0, false) !== HEADER_MAGIC) return null;
+
+  const length = view.getUint32(4, false);
+  if (length > bytes.length - 8) return null;
+
+  try {
+    const meta = JSON.parse(new TextDecoder().decode(bytes.subarray(8, 8 + length)));
+    return { name: meta.n || '', type: meta.t || '', data: bytes.subarray(8 + length) };
+  } catch {
+    return null;
+  }
+}
+
+export async function encryptFile(file, cryptoKey, baseNonce, onProgress, fileName, fileType) {
+  const source = fileName === undefined
+    ? file
+    : new Blob([buildHeader(fileName, fileType), file]);
+
+  const totalChunks = Math.max(1, Math.ceil(source.size / CHUNK_SIZE));
   const chunks = [];
 
   for (let i = 0; i < totalChunks; i++) {
     const offset = i * CHUNK_SIZE;
-    const slice = file.slice(offset, offset + CHUNK_SIZE);
+    const slice = source.slice(offset, offset + CHUNK_SIZE);
     const buffer = await slice.arrayBuffer();
 
     const iv = deriveIV(baseNonce, i);
     const encrypted = await crypto.subtle.encrypt(
-      { name: 'AES-GCM', iv },
+      { name: 'AES-GCM', iv, additionalData: chunkAAD(i) },
       cryptoKey,
       buffer
     );
@@ -50,7 +101,6 @@ export async function encryptFile(file, cryptoKey, baseNonce, onProgress) {
 }
 
 export async function decryptFile(encryptedBuffer, cryptoKey, baseNonce, onProgress) {
-  // each chunk is CHUNK_SIZE + 16 bytes for the gcm tag
   const encryptedChunkSize = CHUNK_SIZE + 16;
   const totalChunks = Math.ceil(encryptedBuffer.byteLength / encryptedChunkSize);
   const chunks = [];
@@ -64,13 +114,13 @@ export async function decryptFile(encryptedBuffer, cryptoKey, baseNonce, onProgr
 
     try {
       const decrypted = await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv },
+        { name: 'AES-GCM', iv, additionalData: chunkAAD(i) },
         cryptoKey,
         chunk
       );
       chunks.push(new Uint8Array(decrypted));
     } catch (e) {
-      throw new Error(`decryption failed at chunk ${i}: ${e.message}`);
+      throw new Error(`decryption failed at chunk ${i}: wrong key or corrupted file`);
     }
 
     if (onProgress) {
@@ -90,6 +140,10 @@ export function exportKey(keyBytes, baseNonce) {
 
 export function importKey(base64Key) {
   const raw = Uint8Array.from(atob(base64Key), c => c.charCodeAt(0));
+  if (raw.length !== 44) {
+    throw new Error('malformed decryption key');
+  }
+
   const keyBytes = raw.slice(0, 32);
   const baseNonce = raw.slice(32);
 
