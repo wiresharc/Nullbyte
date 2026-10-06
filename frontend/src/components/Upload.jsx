@@ -9,7 +9,7 @@ export default function Upload() {
   const [file, setFile] = useState(null)
   const [encrypting, setEncrypting] = useState(false)
   const [uploading, setUploading] = useState(false)
-  const [progress, setProgress] = useState(0)
+  const [uploadStats, setUploadStats] = useState(null)
   const [encryptProgress, setEncryptProgress] = useState(0)
   const [useEncryption, setUseEncryption] = useState(true)
   const [downloadMode, setDownloadMode] = useState('single')
@@ -47,7 +47,7 @@ export default function Upload() {
     }
 
     setUploading(true)
-    setProgress(0)
+    setUploadStats(null)
     setError(null)
     setResult(null)
 
@@ -76,12 +76,10 @@ export default function Upload() {
         captchaToken,
         honeypot: honeypotRef.current?.value || '',
         filename: useEncryption ? 'encrypted.bin' : file.name,
-        onProgress: (loaded, total) => {
-          if (total) setProgress(Math.min(99, Math.round((loaded / total) * 100)))
-        },
+        onProgress: (stats) => setUploadStats(stats),
       })
 
-      setProgress(100)
+      setUploadStats((prev) => (prev ? { ...prev, loaded: prev.total, percent: 100 } : prev))
 
       const downloadUrl = `${window.location.origin}/download/${response.token}`
       const shareUrl = keyFragment
@@ -234,17 +232,7 @@ export default function Upload() {
                 </div>
               </div>
             )}
-            {uploading && (
-              <div>
-                <div className="flex justify-between text-sm mb-2">
-                  <span className="text-gray-400">uploading...</span>
-                  <span className="text-red-400">{progress}%</span>
-                </div>
-                <div className="progress-bar">
-                  <div className="progress-fill" style={{ width: `${progress}%` }} />
-                </div>
-              </div>
-            )}
+            {uploading && <UploadProgress stats={uploadStats} />}
           </div>
         )}
 
@@ -413,6 +401,87 @@ export default function Upload() {
             </div>
           ))}
         </div>
+      </div>
+    </div>
+  )
+}
+
+function formatBytes(bytes) {
+  if (!bytes || bytes < 0) return '0 B'
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' KB'
+  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+  return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB'
+}
+
+function formatDuration(ms) {
+  if (!ms || ms < 0 || !isFinite(ms)) return '--'
+  const total = Math.round(ms / 1000)
+  if (total < 60) return total + 's'
+  const m = Math.floor(total / 60)
+  const s = total % 60
+  if (m < 60) return s ? `${m}m ${s}s` : `${m}m`
+  return `${Math.floor(m / 60)}h ${m % 60}m`
+}
+
+function UploadProgress({ stats }) {
+  if (!stats) {
+    return (
+      <div>
+        <div className="flex justify-between text-sm mb-2">
+          <span className="text-gray-400">uploading...</span>
+        </div>
+        <div className="progress-bar">
+          <div className="progress-fill w-1/4" />
+        </div>
+      </div>
+    )
+  }
+
+  const percent = stats.total ? Math.min(100, Math.round((stats.loaded / stats.total) * 100)) : 0
+  const chunkPercent = stats.chunkTotal
+    ? Math.min(100, Math.round((stats.chunkLoaded / stats.chunkTotal) * 100))
+    : 0
+
+  const segments = []
+  for (let i = 0; i < stats.totalParts; i++) {
+    let fill = 0
+    if (i < stats.chunkIndex) fill = 100
+    else if (i === stats.chunkIndex) fill = chunkPercent
+    segments.push(
+      <div key={i} className="flex-1 h-1.5 rounded-full bg-surface-700 overflow-hidden">
+        <div
+          className="h-full bg-red-500 rounded-full transition-all duration-200 ease-out"
+          style={{ width: `${fill}%` }}
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <div className="flex justify-between text-sm mb-2">
+        <span className="text-gray-400">
+          uploading chunk {stats.chunkIndex + 1} of {stats.totalParts}
+        </span>
+        <span className="text-red-400">{percent}%</span>
+      </div>
+
+      <div className="progress-bar">
+        <div className="progress-fill" style={{ width: `${percent}%` }} />
+      </div>
+
+      {stats.totalParts > 1 && (
+        <div className="flex gap-1 mt-2">{segments}</div>
+      )}
+
+      <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 mt-3 text-xs text-gray-500">
+        <span>{formatBytes(stats.loaded)} of {formatBytes(stats.total)}</span>
+        {stats.rate > 0 && <span>{formatBytes(stats.rate)}/s</span>}
+        <span>{formatDuration(stats.elapsedMs)} elapsed</span>
+        {stats.etaMs != null && stats.etaMs > 0 && stats.loaded < stats.total && (
+          <span>~{formatDuration(stats.etaMs)} left</span>
+        )}
       </div>
     </div>
   )

@@ -30,8 +30,41 @@ export async function uploadBlob(blob, opts) {
   const { downloads, encrypted, captchaToken, honeypot, filename, onProgress } = opts
   const url = `${opts.apiUrl}/api/upload`
 
-  const totalParts = Math.max(1, Math.ceil(blob.size / CHUNK_SIZE))
   const totalSize = blob.size
+  const totalParts = Math.max(1, Math.ceil(totalSize / CHUNK_SIZE))
+
+  const startedAt = Date.now()
+  let uploaded = 0
+  let rate = 0
+  let lastTick = startedAt
+  let lastBytes = 0
+
+  function report(chunkIndex, chunkLoaded, chunkTotal, totalLoaded) {
+    const now = Date.now()
+    const done = Math.min(totalLoaded, totalSize)
+
+    if (now - lastTick > 350) {
+      const instant = ((done - lastBytes) / (now - lastTick)) * 1000
+      rate = instant > 0 ? (rate === 0 ? instant : rate * 0.65 + instant * 0.35) : rate
+      lastTick = now
+      lastBytes = done
+    }
+
+    const remaining = totalSize - done
+    onProgress?.({
+      loaded: done,
+      total: totalSize,
+      chunkIndex,
+      totalParts,
+      chunkLoaded,
+      chunkTotal,
+      rate,
+      elapsedMs: now - startedAt,
+      etaMs: rate > 0 ? (remaining / rate) * 1000 : null,
+    })
+  }
+
+  report(0, 0, Math.min(CHUNK_SIZE, totalSize), 0)
 
   if (totalParts === 1) {
     const formData = new FormData()
@@ -41,11 +74,9 @@ export async function uploadBlob(blob, opts) {
     formData.append('website', honeypot || '')
     formData.append('file', blob, filename)
 
-    const sent = await sendChunk(url, formData, (loaded) => onProgress?.(loaded, totalSize))
-    return sent
+    return sendChunk(url, formData, (loaded) => report(0, loaded, totalSize, loaded))
   }
 
-  let uploaded = 0
   let token = null
   let uploadId = null
 
@@ -63,21 +94,18 @@ export async function uploadBlob(blob, opts) {
       formData.append('encrypted', encrypted)
       formData.append('captcha_token', captchaToken || '')
       formData.append('website', honeypot || '')
-      formData.append('filename', filename)
     }
     formData.append('file', slice, `${filename}.part${i}`)
 
-    let partBase = uploaded
-    const res = await sendChunk(url, formData, (loaded) => {
-      onProgress?.(partBase + loaded, totalSize)
-    })
+    const base = uploaded
+    const res = await sendChunk(url, formData, (loaded) => report(i, loaded, slice.size, base + loaded))
 
-    uploaded = partBase + slice.size
+    uploaded = base + slice.size
 
     if (res.upload_id) uploadId = res.upload_id
     if (res.token) token = res.token
 
-    onProgress?.(uploaded, totalSize)
+    report(i, slice.size, slice.size, uploaded)
 
     if (res.done) return res
   }
