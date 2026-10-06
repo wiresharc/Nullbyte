@@ -27,10 +27,6 @@
     min-height: 100vh;
   }
 
-  .light body {
-    background: #f8fafc;
-  }
-
   ::selection {
     background: rgba(239, 68, 68, 0.3);
   }
@@ -41,16 +37,8 @@
     @apply bg-surface-800/60 backdrop-blur-xl border border-white/5 rounded-2xl;
   }
 
-  .light .glass {
-    @apply bg-white/60 border-black/5;
-  }
-
   .glass-hover {
     @apply transition-all duration-300 hover:bg-surface-700/60 hover:border-white/10 hover:shadow-lg hover:shadow-red-500/5;
-  }
-
-  .light .glass-hover {
-    @apply hover:bg-white/80 hover:border-black/10;
   }
 
   .gradient-text {
@@ -61,10 +49,6 @@
     position: relative;
     background: #12121a;
     border-radius: 1rem;
-  }
-
-  .light .gradient-border {
-    background: #ffffff;
   }
 
   .gradient-border::before {
@@ -92,26 +76,14 @@
            active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
-  .light .btn-secondary {
-    @apply bg-gray-100 border-black/10 hover:bg-gray-200;
-  }
-
   .input-field {
     @apply w-full px-4 py-3 bg-surface-700/50 border border-white/10 rounded-xl text-white
            placeholder-gray-500 focus:outline-none focus:border-red-500/50 focus:ring-1 focus:ring-red-500/25
            transition-all duration-200;
   }
 
-  .light .input-field {
-    @apply bg-gray-100 border-black/10 text-gray-900 placeholder-gray-400;
-  }
-
   .progress-bar {
     @apply h-1.5 bg-surface-700 rounded-full overflow-hidden;
-  }
-
-  .light .progress-bar {
-    @apply bg-gray-200;
   }
 
   .progress-fill {

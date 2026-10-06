@@ -1,15 +1,8 @@
 import { Link, useLocation } from 'react-router-dom'
-import { useState, useEffect } from 'react'
 
 export default function Navbar() {
   const location = useLocation()
   const isDownload = location.pathname.startsWith('/download')
-  const [dark, setDark] = useState(true)
-
-  useEffect(() => {
-    document.documentElement.classList.toggle('light', !dark)
-    document.documentElement.classList.toggle('dark', dark)
-  }, [dark])
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 glass border-b border-white/5">
@@ -21,28 +14,12 @@ export default function Navbar() {
               <circle cx="12" cy="12" r="3" fill="currentColor"/>
             </svg>
           </div>
-            <span className="font-semibold text-lg tracking-tight">
+          <span className="font-semibold text-lg tracking-tight">
             crypt<span className="text-red-500">byte</span>
           </span>
         </Link>
 
         <div className="flex items-center gap-4">
-          <button
-            onClick={() => setDark(!dark)}
-            className="w-9 h-9 rounded-lg bg-surface-700/50 border border-white/10 flex items-center justify-center
-                       hover:bg-surface-600/50 transition-colors"
-            aria-label="toggle theme"
-          >
-            {dark ? (
-              <svg className="w-4 h-4 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-              </svg>
-            ) : (
-              <svg className="w-4 h-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-              </svg>
-            )}
-          </button>
           <a
             href="https://github.com/wiresharc/Nullbyte"
             target="_blank"
