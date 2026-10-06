@@ -1,8 +1,5 @@
-const CHUNK_SIZE = 4 * 1024 * 1024; // 4 MB chunks
+const CHUNK_SIZE = 4 * 1024 * 1024;
 
-/**
- * Generate a random AES-256 key + nonce for encryption
- */
 export async function generateKeyMaterial() {
   const keyBytes = crypto.getRandomValues(new Uint8Array(32));
   const baseNonce = crypto.getRandomValues(new Uint8Array(12));
@@ -18,9 +15,7 @@ export async function generateKeyMaterial() {
   return { keyBytes, baseNonce, cryptoKey };
 }
 
-/**
- * Derive a unique IV per chunk by writing chunk index into last 4 bytes
- */
+// derive unique iv per chunk using chunk index
 function deriveIV(baseNonce, chunkIndex) {
   const iv = new Uint8Array(baseNonce);
   const view = new DataView(iv.buffer);
@@ -28,9 +23,6 @@ function deriveIV(baseNonce, chunkIndex) {
   return iv;
 }
 
-/**
- * Encrypt a file chunk-by-chunk, calling onChunk for each encrypted chunk
- */
 export async function encryptFile(file, cryptoKey, baseNonce, onProgress) {
   const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
   const chunks = [];
@@ -57,11 +49,8 @@ export async function encryptFile(file, cryptoKey, baseNonce, onProgress) {
   return chunks;
 }
 
-/**
- * Decrypt an encrypted file chunk-by-chunk
- */
 export async function decryptFile(encryptedBuffer, cryptoKey, baseNonce, onProgress) {
-  // We need to know chunk boundaries. Each chunk is CHUNK_SIZE + 16 bytes (GCM tag)
+  // each chunk is CHUNK_SIZE + 16 bytes for the gcm tag
   const encryptedChunkSize = CHUNK_SIZE + 16;
   const totalChunks = Math.ceil(encryptedBuffer.byteLength / encryptedChunkSize);
   const chunks = [];
@@ -81,7 +70,7 @@ export async function decryptFile(encryptedBuffer, cryptoKey, baseNonce, onProgr
       );
       chunks.push(new Uint8Array(decrypted));
     } catch (e) {
-      throw new Error(`Decryption failed at chunk ${i}: ${e.message}`);
+      throw new Error(`decryption failed at chunk ${i}: ${e.message}`);
     }
 
     if (onProgress) {
@@ -92,9 +81,6 @@ export async function decryptFile(encryptedBuffer, cryptoKey, baseNonce, onProgr
   return chunks;
 }
 
-/**
- * Export key material to a base64 string for URL fragment
- */
 export function exportKey(keyBytes, baseNonce) {
   const combined = new Uint8Array(44);
   combined.set(keyBytes, 0);
@@ -102,9 +88,6 @@ export function exportKey(keyBytes, baseNonce) {
   return btoa(String.fromCharCode(...combined));
 }
 
-/**
- * Import key material from base64 string
- */
 export function importKey(base64Key) {
   const raw = Uint8Array.from(atob(base64Key), c => c.charCodeAt(0));
   const keyBytes = raw.slice(0, 32);
@@ -119,9 +102,6 @@ export function importKey(base64Key) {
   ).then(cryptoKey => ({ cryptoKey, baseNonce }));
 }
 
-/**
- * Assemble chunks into a single Blob and trigger download
- */
 export function downloadBlob(chunks, filename, mimeType = 'application/octet-stream') {
   const blob = new Blob(chunks, { type: mimeType });
   const url = URL.createObjectURL(blob);

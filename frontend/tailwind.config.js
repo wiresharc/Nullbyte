@@ -4,6 +4,7 @@ export default {
     "./index.html",
     "./src/**/*.{js,jsx}",
   ],
+  darkMode: 'class',
   theme: {
     extend: {
       colors: {
@@ -14,14 +15,9 @@ export default {
           600: '#242440',
         },
         accent: {
-          blue: '#3b82f6',
-          purple: '#8b5cf6',
-          gradient: 'from-blue-500 to-purple-600',
+          red: '#ef4444',
+          darkred: '#dc2626',
         },
-      },
-      backgroundImage: {
-        'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
-        'gradient-conic': 'conic-gradient(var(--tw-gradient-stops))',
       },
       animation: {
         'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
@@ -34,8 +30,8 @@ export default {
           '50%': { transform: 'translateY(-10px)' },
         },
         glow: {
-          '0%': { boxShadow: '0 0 20px rgba(59, 130, 246, 0.3)' },
-          '100%': { boxShadow: '0 0 40px rgba(139, 92, 246, 0.5)' },
+          '0%': { boxShadow: '0 0 20px rgba(239, 68, 68, 0.3)' },
+          '100%': { boxShadow: '0 0 40px rgba(239, 68, 68, 0.5)' },
         },
       },
     },

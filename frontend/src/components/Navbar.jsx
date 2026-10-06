@@ -1,31 +1,50 @@
 import { Link, useLocation } from 'react-router-dom'
+import { useState, useEffect } from 'react'
 
 export default function Navbar() {
   const location = useLocation()
   const isDownload = location.pathname.startsWith('/download')
+  const [dark, setDark] = useState(true)
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('light', !dark)
+    document.documentElement.classList.toggle('dark', dark)
+  }, [dark])
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 glass border-b border-white/5">
       <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
         <Link to="/" className="flex items-center gap-3 group">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center
-                          group-hover:shadow-lg group-hover:shadow-purple-500/25 transition-all duration-300">
+          <div className="w-8 h-8 rounded-lg bg-red-500 flex items-center justify-center
+                          group-hover:shadow-lg group-hover:shadow-red-500/25 transition-all duration-300">
             <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
             </svg>
           </div>
           <span className="font-semibold text-lg tracking-tight">
-            Null<span className="gradient-text">byte</span>
+            Null<span className="text-red-500">byte</span>
           </span>
         </Link>
 
         <div className="flex items-center gap-4">
-          <div className="hidden sm:flex items-center gap-2 text-xs text-gray-500">
-            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-            <span>Zero-knowledge</span>
-          </div>
+          <button
+            onClick={() => setDark(!dark)}
+            className="w-9 h-9 rounded-lg bg-surface-700/50 border border-white/10 flex items-center justify-center
+                       hover:bg-surface-600/50 transition-colors"
+            aria-label="toggle theme"
+          >
+            {dark ? (
+              <svg className="w-4 h-4 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+              </svg>
+            )}
+          </button>
           <a
-            href="https://github.com"
+            href="https://github.com/wiresharc/Nullbyte"
             target="_blank"
             rel="noopener noreferrer"
             className="text-gray-400 hover:text-white transition-colors"
