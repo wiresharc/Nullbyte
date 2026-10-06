@@ -16,6 +16,11 @@ func Captcha(next http.Handler) http.Handler {
 			return
 		}
 
+		if r.URL.Path == "/api/captcha/token" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "invalid form", http.StatusBadRequest)
 			return
