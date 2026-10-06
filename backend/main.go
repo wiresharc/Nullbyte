@@ -28,6 +28,7 @@ func main() {
 
 	maxStorage := envInt64("MAX_STORAGE_BYTES", 100*1024*1024*1024)
 	maxFile := envInt64("MAX_UPLOAD_BYTES", 1024*1024*1024)
+	maxChunk := envInt64("MAX_CHUNK_BYTES", 90*1024*1024)
 	quotaBytes := envInt64("UPLOAD_QUOTA_BYTES", 2*1024*1024*1024)
 	maxConcurrent := int(envInt64("MAX_CONCURRENT_UPLOADS", 4))
 	readTimeout := time.Duration(envInt64("UPLOAD_READ_TIMEOUT_SECONDS", 1800)) * time.Second
@@ -43,7 +44,7 @@ func main() {
 		}
 	}()
 
-	uploadHandler := handlers.NewUploadHandler(store, maxConcurrent, quotaBytes, maxFile, readTimeout, writeTimeout)
+	uploadHandler := handlers.NewUploadHandler(store, maxConcurrent, quotaBytes, maxFile, maxChunk, readTimeout, writeTimeout)
 	downloadHandler := handlers.NewDownloadHandler(store)
 	infoHandler := handlers.NewInfoHandler(store)
 

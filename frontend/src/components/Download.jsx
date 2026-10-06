@@ -14,6 +14,13 @@ export default function Download() {
   const keyMatch = hash.match(/#key=([^&]+)/)
   const encryptionKey = keyMatch ? keyMatch[1] : null
 
+function safeName(name, fallback) {
+  if (!name) return fallback
+  const base = String(name).split(/[\\/]/).pop().trim()
+  if (!base || base === '.' || base === '..') return fallback
+  return base.slice(0, 200)
+}
+
   useEffect(() => {
     fetchFileInfo()
   }, [token])
@@ -77,20 +84,16 @@ export default function Download() {
         if (parsed) {
           downloadBlob(
             [parsed.data],
-            parsed.name || 'downloaded_file',
+            safeName(parsed.name, 'downloaded_file'),
             parsed.type || 'application/octet-stream'
           )
         } else {
           downloadBlob(decryptedChunks, 'downloaded_file', 'application/octet-stream')
         }
       } else {
-        const blob = new Blob([encryptedData])
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = 'downloaded_file'
-        a.click()
-        URL.revokeObjectURL(url)
+        const name = fileInfo?.original_name || 'downloaded_file'
+        const mime = fileInfo?.file_type || 'application/octet-stream'
+        downloadBlob([encryptedData], name, mime)
       }
 
     } catch (err) {

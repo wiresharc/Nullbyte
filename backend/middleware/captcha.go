@@ -48,14 +48,14 @@ func GenerateCaptchaToken() (string, error) {
 	return token, nil
 }
 
-// must run after the multipart form has been parsed
-func ValidateUpload(w http.ResponseWriter, r *http.Request) bool {
-	if r.FormValue("website") != "" {
+// must run after the form fields have been read
+func ValidateUploadFields(w http.ResponseWriter, fields map[string]string) bool {
+	if fields["website"] != "" {
 		http.Error(w, "bot detected", http.StatusForbidden)
 		return false
 	}
 
-	token := r.FormValue("captcha_token")
+	token := fields["captcha_token"]
 	if token == "" {
 		http.Error(w, "captcha required", http.StatusForbidden)
 		return false

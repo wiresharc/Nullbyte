@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -62,7 +63,11 @@ func (h *DownloadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", "attachment; filename=\"file.bin\"")
+	if name := storage.SanitizeFilename(meta.OriginalName); name != "" {
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
+	} else {
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": "file.bin"}))
+	}
 	http.ServeFile(w, r, filePath)
 
 	// burn after the bytes are written, never before

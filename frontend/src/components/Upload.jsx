@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from 'react'
 import { generateKeyMaterial, encryptFile, exportKey } from '../crypto/encryption'
+import { uploadBlob } from '../api/upload'
 import DownloadLookup from './DownloadLookup'
 
 const MAX_FILE_SIZE = 1024 * 1024 * 1024
@@ -51,7 +52,7 @@ export default function Upload() {
     setResult(null)
 
     try {
-      let fileData = file
+      let payload = file
       let keyFragment = null
 
       if (useEncryption) {
@@ -63,40 +64,24 @@ export default function Upload() {
           setEncryptProgress(p)
         }, file.name, file.type)
 
-        const encryptedBlob = new Blob(encryptedChunks)
-        fileData = new File([encryptedBlob], file.name + '.encrypted', { type: 'application/octet-stream' })
-
+        payload = new Blob(encryptedChunks)
         keyFragment = exportKey(keyBytes, baseNonce)
         setEncrypting(false)
       }
 
-      const formData = new FormData()
-      formData.append('file', fileData)
-      formData.append('downloads', downloadMode)
-      formData.append('captcha_token', captchaToken || '')
-      formData.append('website', honeypotRef.current?.value || '')
-      formData.append('encrypted', useEncryption ? 'true' : 'false')
-
-      const xhr = new XMLHttpRequest()
-
-      xhr.upload.addEventListener('progress', (e) => {
-        if (e.lengthComputable) {
-          setProgress(Math.round((e.loaded / e.total) * 100))
-        }
+      const response = await uploadBlob(payload, {
+        apiUrl: import.meta.env.CB_API_URL || '',
+        downloads: downloadMode,
+        encrypted: useEncryption ? 'true' : 'false',
+        captchaToken,
+        honeypot: honeypotRef.current?.value || '',
+        filename: useEncryption ? 'encrypted.bin' : file.name,
+        onProgress: (loaded, total) => {
+          if (total) setProgress(Math.min(99, Math.round((loaded / total) * 100)))
+        },
       })
 
-      const response = await new Promise((resolve, reject) => {
-        xhr.addEventListener('load', () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            resolve(JSON.parse(xhr.responseText))
-          } else {
-            reject(new Error(xhr.responseText || 'upload failed'))
-          }
-        })
-        xhr.addEventListener('error', () => reject(new Error('network error')))
-        xhr.open('POST', `${import.meta.env.CB_API_URL || ''}/api/upload`)
-        xhr.send(formData)
-      })
+      setProgress(100)
 
       const downloadUrl = `${window.location.origin}/download/${response.token}`
       const shareUrl = keyFragment

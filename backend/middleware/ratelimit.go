@@ -94,7 +94,7 @@ type limitRule struct {
 var defaultRule = limitRule{rate: 60, window: time.Minute}
 
 var rules = []limitRule{
-	{prefix: "/api/upload", rate: 4, window: time.Minute},
+	{prefix: "/api/upload", rate: 40, window: time.Minute},
 	{prefix: "/api/captcha/token", rate: 20, window: time.Minute},
 	{prefix: "/api/info/", rate: 20, window: time.Minute},
 }

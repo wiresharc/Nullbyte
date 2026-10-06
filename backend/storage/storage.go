@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,24 +16,34 @@ import (
 )
 
 const orphanGracePeriod = 2 * time.Hour
+const stagingDirName = ".staging"
+const stagingSuffix = ".part"
+const sessionSuffix = ".session.json"
+const IncompleteSessionTTL = 6 * time.Hour
 
 type Store struct {
 	uploadDir   string
 	maxBytes    int64
 	mu          sync.RWMutex
 	metadataDir string
+	stagingDir  string
 	usage       atomic.Int64
+	staging     atomic.Int64
 }
 
 func NewStore(uploadDir string, maxBytes int64) *Store {
 	metaDir := filepath.Join(uploadDir, ".meta")
 	os.MkdirAll(metaDir, 0755)
+	staging := filepath.Join(uploadDir, stagingDirName)
+	os.MkdirAll(staging, 0700)
 	s := &Store{
 		uploadDir:   uploadDir,
 		maxBytes:    maxBytes,
 		metadataDir: metaDir,
+		stagingDir:  staging,
 	}
 	s.usage.Store(dirSize(uploadDir))
+	s.staging.Store(dirSize(staging))
 	return s
 }
 
@@ -166,7 +177,111 @@ func (s *Store) CleanupExpired() {
 	}
 
 	s.reclaimOrphans(referenced)
+	s.CleanupStaging()
 	s.usage.Store(dirSize(s.uploadDir))
+	s.staging.Store(dirSize(s.stagingDir))
+}
+
+func (s *Store) SessionPath(uploadID string) string {
+	return filepath.Join(s.stagingDir, uploadID+sessionSuffix)
+}
+
+func (s *Store) PartPath(uploadID string, index int) string {
+	return filepath.Join(s.stagingDir, uploadID+"."+strconv.Itoa(index)+stagingSuffix)
+}
+
+func (s *Store) LoadSession(uploadID string) (*models.UploadSession, error) {
+	data, err := os.ReadFile(s.SessionPath(uploadID))
+	if err != nil {
+		return nil, err
+	}
+	var session models.UploadSession
+	if err := json.Unmarshal(data, &session); err != nil {
+		return nil, err
+	}
+	return &session, nil
+}
+
+func (s *Store) SaveSession(session models.UploadSession) error {
+	data, err := json.Marshal(session)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(s.SessionPath(session.UploadID), data, 0600)
+}
+
+func (s *Store) DropSession(session models.UploadSession) {
+	os.Remove(s.SessionPath(session.UploadID))
+	for i := 0; i < session.TotalParts; i++ {
+		os.Remove(s.PartPath(session.UploadID, i))
+	}
+}
+
+func (s *Store) CleanupStaging() {
+	entries, err := os.ReadDir(s.stagingDir)
+	if err != nil {
+		return
+	}
+
+	cutoff := time.Now().Add(-IncompleteSessionTTL)
+	live := make(map[string]bool)
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), sessionSuffix) {
+			continue
+		}
+		uploadID := strings.TrimSuffix(entry.Name(), sessionSuffix)
+		session, err := s.LoadSession(uploadID)
+		if err != nil {
+			continue
+		}
+		if session.CreatedAt.Before(cutoff) {
+			s.DropSession(*session)
+			continue
+		}
+		live[uploadID] = true
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), stagingSuffix) {
+			continue
+		}
+		base := strings.TrimSuffix(entry.Name(), stagingSuffix)
+		dot := strings.LastIndex(base, ".")
+		if dot <= 0 {
+			continue
+		}
+		if live[base[:dot]] {
+			continue
+		}
+		path := filepath.Join(s.stagingDir, entry.Name())
+		info, err := os.Stat(path)
+		if err != nil || info.ModTime().Before(cutoff) {
+			os.Remove(path)
+		}
+	}
+}
+
+func (s *Store) SessionStagedBytes(uploadID string, totalParts int) int64 {
+	var total int64
+	for i := 0; i < totalParts; i++ {
+		if info, err := os.Stat(s.PartPath(uploadID, i)); err == nil {
+			total += info.Size()
+		}
+	}
+	return total
+}
+
+func (s *Store) AddStaging(n int64) {
+	s.staging.Add(n)
+}
+
+func (s *Store) ReleaseStaging(n int64) {
+	s.staging.Add(-n)
+}
+
+func (s *Store) HasSpaceForStaging(n int64) bool {
+	return s.usage.Load()+s.staging.Load()+n <= s.maxBytes
 }
 
 func (s *Store) reclaimOrphans(referenced map[string]struct{}) {
@@ -213,6 +328,28 @@ func (s *Store) GetUploadDir() string {
 func HashFilename(name string) string {
 	h := sha256.Sum256([]byte(name))
 	return hex.EncodeToString(h[:])
+}
+
+func SanitizeFilename(name string) string {
+	name = filepath.Base(strings.ReplaceAll(name, "\\", "/"))
+	name = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, name)
+	if cut := strings.IndexAny(name, "\";"); cut >= 0 {
+		name = name[:cut]
+	}
+	name = strings.TrimSpace(name)
+
+	if name == "" || name == "." || name == ".." {
+		return ""
+	}
+	if len(name) > 200 {
+		name = name[:200]
+	}
+	return name
 }
 
 func DetectFileType(data []byte) string {

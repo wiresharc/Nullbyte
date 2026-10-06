@@ -45,6 +45,7 @@ func (h *InfoHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"size":          meta.Size,
 		"file_type":     meta.FileType,
+		"original_name": meta.OriginalName,
 		"expires_at":    meta.ExpiresAt.Format(time.RFC3339),
 		"max_downloads": meta.MaxDownloads,
 		"downloads":     meta.Downloads,
