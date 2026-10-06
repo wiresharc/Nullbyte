@@ -11,6 +11,7 @@ type FileMetadata struct {
 	ExpiresAt    time.Time `json:"expires_at"`
 	MaxDownloads int       `json:"max_downloads"`
 	Downloads    int       `json:"downloads"`
+	Encrypted    bool      `json:"encrypted"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 

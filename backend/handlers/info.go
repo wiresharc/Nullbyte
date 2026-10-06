@@ -48,5 +48,6 @@ func (h *InfoHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		"expires_at":    meta.ExpiresAt.Format(time.RFC3339),
 		"max_downloads": meta.MaxDownloads,
 		"downloads":     meta.Downloads,
+		"encrypted":     meta.Encrypted,
 	})
 }

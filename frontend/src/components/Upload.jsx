@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from 'react'
 import { generateKeyMaterial, encryptFile, exportKey } from '../crypto/encryption'
+import DownloadLookup from './DownloadLookup'
 
 const MAX_FILE_SIZE = 1024 * 1024 * 1024
 
@@ -74,6 +75,7 @@ export default function Upload() {
       formData.append('downloads', downloadMode)
       formData.append('captcha_token', captchaToken || '')
       formData.append('website', honeypotRef.current?.value || '')
+      formData.append('encrypted', useEncryption ? 'true' : 'false')
 
       const xhr = new XMLHttpRequest()
 
@@ -104,6 +106,7 @@ export default function Upload() {
       setResult({
         url: shareUrl,
         token: response.token,
+        key: keyFragment,
         size: response.size,
         fileType: response.file_type,
         expires: response.expires,
@@ -318,7 +321,7 @@ export default function Upload() {
               </div>
             </div>
 
-            <div className="p-4 rounded-xl bg-surface-700/30 border border-white/5 mb-4">
+            <div className="p-4 rounded-xl bg-surface-700/30 border border-white/5 mb-3">
               <p className="text-xs text-gray-500 mb-2">share this link:</p>
               <div className="flex items-center gap-2">
                 <code className="flex-1 text-sm text-red-300 break-all font-mono">
@@ -333,6 +336,38 @@ export default function Upload() {
               </div>
             </div>
 
+            <div className="p-4 rounded-xl bg-surface-700/30 border border-white/5 mb-3">
+              <p className="text-xs text-gray-500 mb-2">file identifier</p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 text-sm text-red-300 break-all font-mono">
+                  {result.token}
+                </code>
+                <button
+                  onClick={() => copyToClipboard(result.token)}
+                  className="shrink-0 px-3 py-1.5 rounded-lg bg-surface-600 hover:bg-surface-500 text-sm transition-colors"
+                >
+                  copy
+                </button>
+              </div>
+            </div>
+
+            {result.key && (
+              <div className="p-4 rounded-xl bg-surface-700/30 border border-white/5 mb-4">
+                <p className="text-xs text-gray-500 mb-2">decryption key</p>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 text-sm text-red-300 break-all font-mono">
+                    {result.key}
+                  </code>
+                  <button
+                    onClick={() => copyToClipboard(result.key)}
+                    className="shrink-0 px-3 py-1.5 rounded-lg bg-surface-600 hover:bg-surface-500 text-sm transition-colors"
+                  >
+                    copy
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-3 gap-4 text-center">
               <div>
                 <p className="text-xs text-gray-500">size</p>
@@ -344,11 +379,13 @@ export default function Upload() {
               </div>
               <div>
                 <p className="text-xs text-gray-500">expires</p>
-                <p className="text-sm font-medium">{new Date(result.expires).toLocaleDateString()}</p>
+                <p className="text-sm font-medium">{new Date(result.expires).toLocaleString()}</p>
               </div>
             </div>
           </div>
         )}
+
+        <DownloadLookup />
 
         <div className="grid sm:grid-cols-3 gap-4 mt-16">
           {[

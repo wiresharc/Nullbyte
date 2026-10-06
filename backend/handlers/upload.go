@@ -92,6 +92,7 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:    time.Now().Add(24 * time.Hour),
 		MaxDownloads: maxDownloads,
 		Downloads:    0,
+		Encrypted:    r.FormValue("encrypted") == "true",
 		CreatedAt:    time.Now(),
 	}
 
