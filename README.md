@@ -1,2 +1,2 @@
-# Nullbyte
-A privacy &amp; anonymity focused, zero-trust, no sign-up, ad-free, file encryption and sharing service.
+**Cryptbyte**  
+A privacy & anonymity focused, zero-trust, no sign-up, ad-free, file encryption and sharing service.  
