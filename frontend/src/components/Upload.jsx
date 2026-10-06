@@ -14,6 +14,8 @@ export default function Upload() {
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
   const [dragOver, setDragOver] = useState(false)
+  const [captchaVerified, setCaptchaVerified] = useState(false)
+  const [captchaToken, setCaptchaToken] = useState(null)
   const fileInputRef = useRef(null)
 
   const handleFile = useCallback((f) => {
@@ -36,6 +38,10 @@ export default function Upload() {
 
   const handleUpload = async () => {
     if (!file) return
+    if (!captchaVerified) {
+      setError('please verify captcha')
+      return
+    }
 
     setUploading(true)
     setProgress(0)
@@ -65,6 +71,8 @@ export default function Upload() {
       const formData = new FormData()
       formData.append('file', fileData)
       formData.append('downloads', downloadMode)
+      formData.append('captcha_token', captchaToken || '')
+      formData.append('website', '')
 
       const xhr = new XMLHttpRequest()
 
@@ -127,7 +135,7 @@ export default function Upload() {
         </div>
 
         <div
-          className={`gradient-border p-1 mb-8 transition-all duration-300 ${
+          className={`border border-red-500/20 rounded-2xl p-1 mb-8 transition-all duration-300 ${
             dragOver ? 'scale-[1.01]' : ''
           }`}
           onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
@@ -136,7 +144,7 @@ export default function Upload() {
         >
           <div
             className={`rounded-2xl p-8 sm:p-12 text-center transition-all duration-300 cursor-pointer ${
-              dragOver ? 'bg-red-500/10' : 'bg-surface-800/40'
+              dragOver ? 'bg-red-500/10' : 'bg-surface-800'
             }`}
             onClick={() => fileInputRef.current?.click()}
           >
@@ -149,10 +157,10 @@ export default function Upload() {
 
             {!file ? (
               <>
-                <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-red-500/20 to-red-600/20
-                              flex items-center justify-center animate-float">
-                  <svg className="w-8 h-8 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-red-500/10 flex items-center justify-center">
+                  <svg className="w-8 h-8 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+                    <path d="M12 2 L22 12 L12 22 L2 12 Z" strokeLinejoin="round"/>
+                    <circle cx="12" cy="12" r="3" fill="currentColor"/>
                   </svg>
                 </div>
                 <p className="text-lg font-medium mb-2">drop your file here or click to browse</p>
@@ -161,10 +169,10 @@ export default function Upload() {
               </>
             ) : (
               <>
-                <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-red-500/20 to-red-600/20
-                              flex items-center justify-center">
-                  <svg className="w-8 h-8 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-red-500/10 flex items-center justify-center">
+                  <svg className="w-8 h-8 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+                    <path d="M12 2 L22 12 L12 22 L2 12 Z" strokeLinejoin="round"/>
+                    <circle cx="12" cy="12" r="3" fill="currentColor"/>
                   </svg>
                 </div>
                 <p className="text-lg font-medium mb-1 truncate max-w-md mx-auto">{file.name}</p>
@@ -193,7 +201,7 @@ export default function Upload() {
                 <button
                   onClick={() => setUseEncryption(!useEncryption)}
                   className={`relative w-11 h-6 rounded-full transition-colors duration-300 ${
-                    useEncryption ? 'bg-gradient-to-r from-red-500 to-red-600' : 'bg-surface-600'
+                    useEncryption ? 'bg-red-500' : 'bg-surface-600'
                   }`}
                 >
                   <div className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-300 ${
@@ -251,6 +259,29 @@ export default function Upload() {
 
         {file && !uploading && !encrypting && (
           <div className="text-center mb-8">
+            <div className="glass p-4 mb-4 max-w-md mx-auto">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={captchaVerified}
+                  onChange={async (e) => {
+                    if (e.target.checked && !captchaToken) {
+                      try {
+                        const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/captcha/token`)
+                        const data = await res.json()
+                        setCaptchaToken(data.token)
+                      } catch (err) {
+                        setError('failed to load captcha')
+                        return
+                      }
+                    }
+                    setCaptchaVerified(e.target.checked)
+                  }}
+                  className="w-5 h-5 rounded border border-white/20 bg-surface-700 text-red-500 focus:ring-red-500/50"
+                />
+                <span className="text-sm text-gray-300">i am not a robot</span>
+              </label>
+            </div>
             <button onClick={handleUpload} className="btn-primary text-lg px-10 py-4">
               {useEncryption ? 'encrypt & upload' : 'upload file'}
             </button>
@@ -340,8 +371,7 @@ export default function Upload() {
             },
           ].map((f, i) => (
             <div key={i} className="glass glass-hover p-6">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-red-500/20 to-red-600/20
-                              flex items-center justify-center text-red-400 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-red-500/10 flex items-center justify-center text-red-500 mb-4">
                 {f.icon}
               </div>
               <h3 className="font-medium mb-2">{f.title}</h3>

@@ -15,14 +15,14 @@ export default function Navbar() {
     <nav className="fixed top-0 left-0 right-0 z-50 glass border-b border-white/5">
       <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
         <Link to="/" className="flex items-center gap-3 group">
-          <div className="w-8 h-8 rounded-lg bg-red-500 flex items-center justify-center
-                          group-hover:shadow-lg group-hover:shadow-red-500/25 transition-all duration-300">
-            <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+          <div className="w-8 h-8 rounded-lg bg-red-500 flex items-center justify-center">
+            <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <path d="M12 2 L22 12 L12 22 L2 12 Z" strokeLinejoin="round"/>
+              <circle cx="12" cy="12" r="3" fill="currentColor"/>
             </svg>
           </div>
-          <span className="font-semibold text-lg tracking-tight">
-            Null<span className="text-red-500">byte</span>
+            <span className="font-semibold text-lg tracking-tight">
+            crypt<span className="text-red-500">byte</span>
           </span>
         </Link>
 

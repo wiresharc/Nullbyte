@@ -102,11 +102,12 @@ export default function Download() {
     return (
       <div className="min-h-screen pt-24 pb-16 px-4 flex items-center justify-center">
         <div className="glass p-8 max-w-md w-full text-center">
-          <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-red-500/20 flex items-center justify-center">
-            <svg className="w-8 h-8 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-          </div>
+            <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-red-500/10 flex items-center justify-center">
+              <svg className="w-8 h-8 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+                <path d="M12 2 L22 12 L12 22 L2 12 Z" strokeLinejoin="round"/>
+                <circle cx="12" cy="12" r="3" fill="currentColor"/>
+              </svg>
+            </div>
           <h2 className="text-xl font-semibold mb-2">download unavailable</h2>
           <p className="text-gray-400">{error}</p>
         </div>
@@ -137,13 +138,13 @@ export default function Download() {
           <p className="text-gray-400">this file will be available for 24 hours after upload</p>
         </div>
 
-        <div className="gradient-border p-1 mb-6">
+        <div className="border border-red-500/20 rounded-2xl p-1 mb-6">
           <div className="rounded-2xl bg-surface-800/40 p-6">
             <div className="flex items-center gap-4 mb-6">
-              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-red-500/20 to-red-600/20
-                              flex items-center justify-center shrink-0">
-                <svg className="w-7 h-7 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              <div className="w-14 h-14 rounded-2xl bg-red-500/10 flex items-center justify-center shrink-0">
+                <svg className="w-7 h-7 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+                  <path d="M12 2 L22 12 L12 22 L2 12 Z" strokeLinejoin="round"/>
+                  <circle cx="12" cy="12" r="3" fill="currentColor"/>
                 </svg>
               </div>
               <div className="min-w-0">

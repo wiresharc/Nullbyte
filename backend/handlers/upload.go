@@ -28,7 +28,6 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse multipart form (max 1GB + 32MB overhead)
 	r.Body = http.MaxBytesReader(w, r.Body, 1024*1024*1024+32*1024*1024)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		http.Error(w, "file too large", http.StatusBadRequest)
@@ -43,27 +42,22 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Check storage space
 	if !h.store.HasSpace(header.Size) {
 		http.Error(w, "storage full", http.StatusInsufficientStorage)
 		return
 	}
 
-	// Read first 512 bytes for type detection
 	buf := make([]byte, 512)
 	n, _ := file.Read(buf)
 	fileType := storage.DetectFileType(buf[:n])
 
-	// Generate token
 	tokenBytes := make([]byte, 16)
 	rand.Read(tokenBytes)
 	token := hex.EncodeToString(tokenBytes)
 
-	// Store file
 	storedName := token + ".bin"
 	destPath := filepath.Join(h.store.GetUploadDir(), storedName)
 
-	// Re-open file for full write
 	file.Seek(0, io.SeekStart)
 	dest, err := os.Create(destPath)
 	if err != nil {
@@ -79,13 +73,11 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get download count from form
 	maxDownloads := 1
 	if r.FormValue("downloads") == "multi" {
 		maxDownloads = 10 // configurable
 	}
 
-	// Save metadata
 	meta := models.FileMetadata{
 		Token:        token,
 		StoredName:   storedName,
@@ -104,7 +96,6 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Respond
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"token":     token,

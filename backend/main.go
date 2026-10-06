@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -12,14 +13,11 @@ import (
 )
 
 func main() {
-	// Ensure upload directory exists
 	uploadDir := "./uploads"
 	os.MkdirAll(uploadDir, 0755)
 
-	// Initialize store
-	store := storage.NewStore(uploadDir, 100*1024*1024*1024) // 100GB cap
+	store := storage.NewStore(uploadDir, 100*1024*1024*1024)
 
-	// Start cleanup goroutine
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
@@ -28,29 +26,32 @@ func main() {
 		}
 	}()
 
-	// Initialize handlers
 	uploadHandler := handlers.NewUploadHandler(store)
 	downloadHandler := handlers.NewDownloadHandler(store)
 	infoHandler := handlers.NewInfoHandler(store)
 
-	// Router
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/upload", uploadHandler.Handle)
 	mux.HandleFunc("/api/download/", downloadHandler.Handle)
 	mux.HandleFunc("/api/info/", infoHandler.Handle)
+	mux.HandleFunc("/api/captcha/token", func(w http.ResponseWriter, r *http.Request) {
+		token := middleware.GenerateCaptchaToken()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"token": token})
+	})
 
-	// Middleware chain: logging -> rate limit -> captcha -> handler
 	var handler http.Handler = mux
 	handler = middleware.Logging(handler)
-	handler = middleware.RateLimit(handler, 20, 60) // 20 req/min per IP
+	handler = middleware.RateLimit(handler, 20, 60)
 	handler = middleware.Captcha(handler)
 
-	// Server
+	// workin on a weeknd like usual
+
 	srv := &http.Server{
 		Addr:         ":8080",
 		Handler:      handler,
 		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 0, // no timeout for large uploads
+		WriteTimeout: 0,
 		IdleTimeout:  120 * time.Second,
 	}
 

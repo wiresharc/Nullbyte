@@ -37,7 +37,6 @@ func Logging(next http.Handler) http.Handler {
 		start := time.Now()
 		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 
-		// Wrap response writer to capture status and bytes
 		wrapped := &responseWriter{ResponseWriter: w, statusCode: 200}
 
 		next.ServeHTTP(wrapped, r)

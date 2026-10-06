@@ -150,35 +150,28 @@ func DetectFileType(data []byte) string {
 		return "application/octet-stream"
 	}
 
-	// PDF
+	// magic bytes detection
 	if data[0] == 0x25 && data[1] == 0x50 && data[2] == 0x44 && data[3] == 0x46 {
 		return "application/pdf"
 	}
-	// PNG
 	if data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 {
 		return "image/png"
 	}
-	// JPEG
 	if data[0] == 0xFF && data[1] == 0xD8 {
 		return "image/jpeg"
 	}
-	// GIF
 	if data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46 {
 		return "image/gif"
 	}
-	// ZIP
 	if data[0] == 0x50 && data[1] == 0x4B && (data[2] == 0x03 || data[2] == 0x05 || data[2] == 0x07) {
 		return "application/zip"
 	}
-	// MP3
 	if data[0] == 0x49 && data[1] == 0x44 && data[2] == 0x33 {
 		return "audio/mpeg"
 	}
-	// MP4
 	if string(data[4:8]) == "ftyp" {
 		return "video/mp4"
 	}
-	// DOCX (ZIP-based)
 	if data[0] == 0x50 && data[1] == 0x4B && data[2] == 0x03 && data[3] == 0x04 {
 		if len(data) > 30 && string(data[30:38]) == "[Content" {
 			return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"

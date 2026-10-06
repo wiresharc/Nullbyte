@@ -1,62 +1,57 @@
 package middleware
 
 import (
-	"encoding/json"
-	"io"
+	"crypto/rand"
+	"encoding/hex"
 	"net/http"
-	"net/url"
-	"os"
+	"time"
 )
 
-var captchaSecret string
-
-func init() {
-	captchaSecret = os.Getenv("TURNSTILE_SECRET")
-}
+var captchaTokens = make(map[string]bool)
 
 func Captcha(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Only check on POST requests (uploads)
 		if r.Method != http.MethodPost {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		// Parse form to get captcha token
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "invalid form", http.StatusBadRequest)
 			return
 		}
 
-		token := r.FormValue("cf-turnstile-response")
-		if token == "" {
+		honeypot := r.FormValue("website")
+		if honeypot != "" {
+			http.Error(w, "bot detected", http.StatusForbidden)
+			return
+		}
+
+		captchaToken := r.FormValue("captcha_token")
+		if captchaToken == "" {
 			http.Error(w, "captcha required", http.StatusForbidden)
 			return
 		}
 
-		// Verify with Cloudflare
-		resp, err := http.PostForm("https://challenges.cloudflare.com/turnstile/v0/siteverify", url.Values{
-			"secret":  {captchaSecret},
-			"response": {token},
-			"remoteip": {r.RemoteAddr},
-		})
-		if err != nil {
-			http.Error(w, "captcha verification failed", http.StatusInternalServerError)
+		if !captchaTokens[captchaToken] {
+			http.Error(w, "invalid captcha", http.StatusForbidden)
 			return
 		}
-		defer resp.Body.Close()
 
-		body, _ := io.ReadAll(resp.Body)
-		var result struct {
-			Success bool `json:"success"`
-		}
-		json.Unmarshal(body, &result)
-
-		if !result.Success {
-			http.Error(w, "captcha failed", http.StatusForbidden)
-			return
-		}
+		delete(captchaTokens, captchaToken)
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func GenerateCaptchaToken() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	token := hex.EncodeToString(b)
+	captchaTokens[token] = true
+	go func() {
+		time.Sleep(5 * time.Minute)
+		delete(captchaTokens, token)
+	}()
+	return token
 }

@@ -5,11 +5,11 @@ import "time"
 type FileMetadata struct {
 	Token        string    `json:"token"`
 	StoredName   string    `json:"stored_name"`
-	OriginalHash string    `json:"original_hash"` // SHA-256 of original filename
+	OriginalHash string    `json:"original_hash"`
 	Size         int64     `json:"size"`
-	FileType     string    `json:"file_type"` // magic bytes detection
+	FileType     string    `json:"file_type"`
 	ExpiresAt    time.Time `json:"expires_at"`
-	MaxDownloads int       `json:"max_downloads"` // 1 = single-use, >1 = multi-use
+	MaxDownloads int       `json:"max_downloads"`
 	Downloads    int       `json:"downloads"`
 	CreatedAt    time.Time `json:"created_at"`
 }

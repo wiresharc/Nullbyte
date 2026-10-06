@@ -23,7 +23,7 @@ func (h *DownloadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract token from /api/download/{token}
+	// extract token from path
 	token := strings.TrimPrefix(r.URL.Path, "/api/download/")
 	if token == "" {
 		http.Error(w, "token required", http.StatusBadRequest)
@@ -36,14 +36,13 @@ func (h *DownloadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check expiry
+	// check expiry and download limit
 	if meta.IsExpired() {
 		h.store.Delete(token)
 		http.Error(w, "file expired", http.StatusGone)
 		return
 	}
 
-	// Check download limit
 	if meta.Downloads >= meta.MaxDownloads {
 		h.store.Delete(token)
 		http.Error(w, "download limit reached", http.StatusGone)
@@ -56,7 +55,6 @@ func (h *DownloadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Increment download count
 	meta.Downloads++
 	if meta.Downloads >= meta.MaxDownloads {
 		h.store.Delete(token)
@@ -64,7 +62,6 @@ func (h *DownloadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		h.store.Save(token, *meta)
 	}
 
-	// Serve file
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment; filename=\"file.bin\"")
 	http.ServeFile(w, r, filePath)
