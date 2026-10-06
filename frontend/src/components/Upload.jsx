@@ -279,7 +279,7 @@ export default function Upload() {
                   }}
                   className="w-5 h-5 rounded border border-white/20 bg-surface-700 text-red-500 focus:ring-red-500/50"
                 />
-                <span className="text-sm text-gray-300">i am not a robot</span>
+                <span className="text-sm text-gray-300">I am not a robot.</span>
               </label>
             </div>
             <button onClick={handleUpload} className="btn-primary text-lg px-10 py-4">
