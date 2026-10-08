@@ -71,7 +71,14 @@ function safeName(name, fallback) {
 
         if (canStream && isLarge) {
           const handle = await window.showSaveFilePicker({ suggestedName: name })
-          await response.body.pipeTo(await handle.createWritable())
+          const writable = await handle.createWritable()
+          const reader = response.body.getReader()
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            await writable.write(value)
+          }
+          await writable.close()
         } else {
           downloadBlob([new Uint8Array(await response.arrayBuffer())], name, mime)
         }
@@ -127,16 +134,28 @@ function safeName(name, fallback) {
 
       if (probe.header.compressed) {
         const ds = new DecompressionStream('gzip')
-        const pump = ds.readable.pipeTo(writable)
-        const writer = ds.writable.getWriter()
 
+        // the output has to be drained while input is still being written, otherwise
+        // the transform backs up and write() never resolves. pipeTo would do this for
+        // us, but a FileSystemWritableFileStream is not a WritableStream
+        const out = ds.readable.getReader()
+        const drain = (async () => {
+          while (true) {
+            const { done, value } = await out.read()
+            if (done) break
+            await writable.write(value)
+          }
+        })()
+
+        const writer = ds.writable.getWriter()
         const stream = await openEncryptedStream(
           probe.reader, probe.prefix, cryptoKey, baseNonce,
           () => {}, probe.firstPlain
         )
         for await (const part of stream.read()) await writer.write(part.bytes)
         await writer.close()
-        await pump
+        await drain
+        await writable.close()
       } else {
         const stream = await openEncryptedStream(
           probe.reader, probe.prefix, cryptoKey, baseNonce,

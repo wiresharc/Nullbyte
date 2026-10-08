@@ -17,8 +17,19 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms))
 }
 
-async function sendPart(url, formData, onProgress) {
+function abortError() {
+  const err = new Error('upload cancelled')
+  err.name = 'AbortError'
+  return err
+}
+
+async function sendPart(url, formData, onProgress, signal) {
   const xhr = new XMLHttpRequest()
+
+  if (signal) {
+    if (signal.aborted) throw abortError()
+    signal.addEventListener('abort', () => xhr.abort(), { once: true })
+  }
 
   xhr.upload.addEventListener('progress', (e) => {
     if (e.lengthComputable && onProgress) onProgress(e.loaded)
@@ -37,24 +48,34 @@ async function sendPart(url, formData, onProgress) {
       }
     })
     xhr.addEventListener('error', () => reject(new Error('network error')))
-    xhr.addEventListener('abort', () => reject(new Error('upload aborted')))
+    xhr.addEventListener('abort', () => reject(abortError()))
     xhr.open('POST', url)
     xhr.send(formData)
   })
 }
 
-async function sendWithRetry(url, build, onProgress, shouldAbort) {
+async function sendWithRetry(url, build, onProgress, signal) {
   let lastErr
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    if (shouldAbort && shouldAbort()) throw new Error('upload cancelled')
+    if (signal?.aborted) throw abortError()
     try {
-      return await sendPart(url, build(), onProgress)
+      return await sendPart(url, build(), onProgress, signal)
     } catch (err) {
+      if (err && err.name === 'AbortError') throw err
       lastErr = err
       if (attempt < MAX_ATTEMPTS) await sleep(400 * attempt * attempt)
     }
   }
   throw lastErr
+}
+
+export async function preparePayload(blob, opts, onProgress) {
+  const raw = blob.size
+  if (!opts.encrypted || !opts.compress) {
+    return { blob, raw, final: raw, spilled: false }
+  }
+  const result = await compressToStore(blob, onProgress)
+  return { blob: result.blob, raw, final: result.size, spilled: result.spilled }
 }
 
 export function readPendingUpload() {
@@ -90,7 +111,7 @@ function plan(opts, store) {
   const { encrypted, compress, name, type } = opts
 
   if (!encrypted) {
-    const totalSize = blob.size
+    const totalSize = store.size
     return {
       encrypted: false,
       totalSize,
@@ -98,6 +119,7 @@ function plan(opts, store) {
       totalParts: Math.max(1, Math.ceil(totalSize / PART_SIZE)),
       chunkCount: 0,
       header: null,
+      payload: store,
     }
   }
 
@@ -169,17 +191,19 @@ export async function uploadBlob(blob, opts) {
     filename, onProgress, signal, resume,
   } = opts
 
-  let source = blob
-  let compression = null
+  let source = opts.precompressed || blob
+  let compression = opts.precompressed
+    ? { from: blob.size, to: source.size, spilled: opts.spilled === true }
+    : null
 
-  if (opts.encrypted && opts.compress) {
+  if (opts.encrypted && opts.compress && !opts.precompressed) {
     const result = await compressToStore(blob, (sent) => {
       onProgress?.({
         phase: 'compressing',
         loaded: sent,
         total: blob.size,
         chunkIndex: 0,
-        totalParts: 0,
+        totalParts: 1,
         chunkLoaded: sent,
         chunkTotal: blob.size,
         rate: 0,
@@ -250,6 +274,7 @@ export async function uploadBlob(blob, opts) {
     uploadId: null,
     totalSize: planData.totalSize,
     totalParts: planData.totalParts,
+    sourceSize: blob.size,
     filename,
     encrypted,
     compress,
@@ -269,7 +294,7 @@ export async function uploadBlob(blob, opts) {
     formData.append('website', honeypot || '')
     formData.append('file', new Blob([only.bytes], { type: 'application/octet-stream' }), filename)
 
-    const res = await sendWithRetry(url, () => formData, null, () => signal?.aborted)
+    const res = await sendWithRetry(url, () => formData, null, signal)
     clearPendingUpload()
     return { token: res.token, size: planData.totalSize, done: true, compression }
   }
@@ -300,7 +325,7 @@ export async function uploadBlob(blob, opts) {
       url,
       () => formData,
       (within) => report(part.index, within, slice.size),
-      () => signal?.aborted
+      signal
     )
 
     uploaded = base + slice.size

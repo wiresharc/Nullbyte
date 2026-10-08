@@ -1,10 +1,15 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { generateKeyMaterial, exportKey } from '../crypto/encryption'
+import { generateKeyMaterial, exportKey, importKey } from '../crypto/encryption'
 import { encodeBundle } from '../crypto/bundle'
-import { uploadBlob, readPendingUpload, clearPendingUpload } from '../api/upload'
+import { removeOpfsFile } from '../crypto/compress'
+import { uploadBlob, preparePayload, readPendingUpload, clearPendingUpload } from '../api/upload'
 import DownloadLookup from './DownloadLookup'
+import { filesFromDrop, mergeFiles, totalSize } from '../api/files'
 
-const MAX_FILE_SIZE = 1024 * 1024 * 1024
+const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024
+
+const formatLimit = (bytes) => (bytes / 1024 / 1024 / 1024).toFixed(0) + ' gb'
+
 
 export default function Upload() {
   const [file, setFile] = useState(null)
@@ -20,36 +25,117 @@ export default function Upload() {
   const fileInputRef = useRef(null)
   const honeypotRef = useRef(null)
   const abortRef = useRef(null)
-  const [files, setFiles] = useState([])
-  const [bundleMode, setBundleMode] = useState(false)
+  const [bundleFiles, setBundleFiles] = useState([])
+  const [bundleDragOver, setBundleDragOver] = useState(false)
   const [useCompression, setUseCompression] = useState(false)
   const [bundleName, setBundleName] = useState('')
   const [pending, setPending] = useState(null)
+  const [resuming, setResuming] = useState(false)
+  const [prepared, setPrepared] = useState(null)
+  const [preparing, setPreparing] = useState(false)
+  const [rawSize, setRawSize] = useState(0)
 
   useEffect(() => {
     setPending(readPendingUpload())
   }, [])
 
-  const handleFile = useCallback((f) => {
-    if (!f) return
-    if (f.size > MAX_FILE_SIZE) {
-      setError('file exceeds 1gb limit. for larger files, use zip compression to bring the size under 1gb.')
+  const activeFiles = bundleFiles.length > 0 ? bundleFiles : file ? [file] : []
+  const compressing = useEncryption && useCompression
+  const effectiveSize = compressing && prepared ? prepared.final : rawSize
+  const overLimit = effectiveSize > MAX_FILE_SIZE
+
+  const buildPayload = useCallback((chosen, name) => {
+    if (chosen.length > 1) {
+      const { manifestBlob, dataSize, count } = encodeBundle(chosen)
+      return {
+        blob: new Blob([manifestBlob, ...chosen]),
+        displayName: (name || 'bundle').replace(/\.[a-z0-9]+$/i, '') + '.cryptbyte',
+        bundleEntries: { count, dataSize },
+      }
+    }
+    return { blob: chosen[0], displayName: chosen[0].name, bundleEntries: null }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    if (!file && bundleFiles.length === 0) {
+      setPrepared(null)
+      setPreparing(false)
+      setRawSize(0)
       return
     }
+
+    const built = buildPayload(activeFiles, bundleName)
+    const raw = built.blob.size
+
+    setRawSize(raw)
+
+    if (!useEncryption || !useCompression) {
+      setPrepared({ blob: null, raw, final: raw, spilled: false })
+      setPreparing(false)
+      if (raw > MAX_FILE_SIZE) {
+        setError(`file is ${formatSize(raw)} which exceeds the ${formatLimit(MAX_FILE_SIZE)} limit`)
+      } else {
+        setError(null)
+      }
+      return
+    }
+
+    setPreparing(true)
+    setPrepared(null)
+
+    preparePayload(built.blob, { encrypted: true, compress: true })
+      .then((result) => {
+        if (cancelled) return
+        setPrepared(result)
+        setPreparing(false)
+        if (result.final > MAX_FILE_SIZE) {
+          setError(`${formatSize(result.final)} after compression still exceeds the ${formatLimit(MAX_FILE_SIZE)} limit`)
+        } else {
+          setError(null)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) { setPreparing(false); setPrepared(null) }
+      })
+
+    return () => { cancelled = true }
+  }, [file, bundleFiles, useCompression, useEncryption, buildPayload])
+
+  const handleFile = useCallback((f) => {
+    if (!f) return
     setFile(f)
-    setError(null)
+    setBundleFiles([])
     setResult(null)
   }, [])
 
   const handleDrop = useCallback((e) => {
     e.preventDefault()
     setDragOver(false)
-    const f = e.dataTransfer.files[0]
-    handleFile(f)
+    handleFile(e.dataTransfer.files[0])
   }, [handleFile])
 
+  const addBundleFiles = useCallback((incoming) => {
+    if (!incoming || !incoming.length) return
+    setBundleFiles((prev) => mergeFiles(prev, incoming))
+    setFile(null)
+    setResult(null)
+  }, [])
+
+  const handleBundleDrop = useCallback(async (e) => {
+    e.preventDefault()
+    setBundleDragOver(false)
+    const dropped = await filesFromDrop(e.dataTransfer)
+    addBundleFiles(dropped)
+  }, [addBundleFiles])
+
+  const clearBundle = useCallback(() => {
+    setBundleFiles([])
+    setBundleName('')
+  }, [])
+
   const handleUpload = async () => {
-    if (!file) return
+    if (!file && bundleFiles.length === 0) return
     if (!captchaVerified) {
       setError('please verify captcha')
       return
@@ -62,32 +148,49 @@ export default function Upload() {
     setResult(null)
 
     try {
-      const parts = [file]
-      let payload = file
-      let displayName = file.name
-      let bundleEntries = null
+      const chosen = bundleFiles.length > 0 ? bundleFiles : [file]
+      const built = buildPayload(chosen, bundleName)
+      const payload = built.blob
+      const displayName = built.displayName
+      const bundleEntries = built.bundleEntries
 
-      if (bundleMode && files.length > 1) {
-        const { manifestBlob, dataSize, count } = encodeBundle(files)
-        payload = new Blob([manifestBlob, ...files])
-        displayName = bundleName || 'bundle'
-        bundleEntries = { count, dataSize }
-      } else if (bundleMode && files.length === 1) {
-        payload = files[0]
-        displayName = files[0].name
+      if (prepared && prepared.final > MAX_FILE_SIZE) {
+        setError(
+          prepared.raw > MAX_FILE_SIZE
+            ? `file is ${formatSize(prepared.raw)} which exceeds the ${formatLimit(MAX_FILE_SIZE)} limit`
+            : `${formatSize(prepared.final)} after compression still exceeds the ${formatLimit(MAX_FILE_SIZE)} limit`
+        )
+        setUploading(false)
+        return
       }
 
       let keyFragment = null
       let cryptoKey = null
       let baseNonce = null
       let keyB64 = null
+      let resume = null
+
+      const canResume = Boolean(
+        resuming && pending && pending.uploadId && pending.keyB64 &&
+        !bundleEntries && file && !useCompression &&
+        pending.sourceSize === built.blob.size
+      )
 
       if (useEncryption) {
-        const material = await generateKeyMaterial()
-        cryptoKey = material.cryptoKey
-        baseNonce = material.baseNonce
-        keyB64 = exportKey(material.keyBytes, material.baseNonce)
-        keyFragment = keyB64
+        if (canResume && pending.keyB64) {
+          const restored = await importKey(pending.keyB64)
+          cryptoKey = restored.cryptoKey
+          baseNonce = restored.baseNonce
+          keyB64 = pending.keyB64
+          resume = { uploadId: pending.uploadId }
+          keyFragment = keyB64
+        } else {
+          const material = await generateKeyMaterial()
+          cryptoKey = material.cryptoKey
+          baseNonce = material.baseNonce
+          keyB64 = exportKey(material.keyBytes, material.baseNonce)
+          keyFragment = keyB64
+        }
       }
 
       const response = await uploadBlob(payload, {
@@ -98,8 +201,11 @@ export default function Upload() {
         baseNonce,
         keyB64,
         name: displayName,
-        type: file.type || 'application/octet-stream',
+        type: bundleEntries ? 'application/octet-stream' : (chosen[0].type || 'application/octet-stream'),
         compress: useEncryption && useCompression,
+        precompressed: resume ? null : prepared?.blob,
+        spilled: prepared?.spilled,
+        resume,
         captchaToken,
         honeypot: honeypotRef.current?.value || '',
         filename: useEncryption ? 'encrypted.bin' : displayName,
@@ -107,6 +213,9 @@ export default function Upload() {
         onProgress: (stats) => setUploadStats(stats),
       })
 
+      setPrepared(null)
+      setResuming(false)
+      setPending(null)
       setUploadStats((prev) => (prev ? { ...prev, loaded: prev.total, percent: 100 } : prev))
 
       const downloadUrl = `${window.location.origin}/download/${response.token}`
@@ -133,6 +242,8 @@ export default function Upload() {
       }
       setCaptchaToken(null)
       setCaptchaVerified(false)
+    } finally {
+      removeOpfsFile()
     }
     setUploading(false)
   }
@@ -157,57 +268,145 @@ export default function Upload() {
           </h1>
         </div>
 
-        <div
-          className={`border border-red-500/20 rounded-2xl p-1 mb-8 transition-all duration-300 ${
-            dragOver ? 'scale-[1.01]' : ''
-          }`}
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={handleDrop}
-        >
-          <div
-            className={`rounded-2xl p-8 sm:p-12 text-center transition-all duration-300 cursor-pointer ${
-              dragOver ? 'bg-red-500/10' : 'bg-surface-800'
-            }`}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              className="hidden"
-              onChange={(e) => handleFile(e.target.files[0])}
-            />
+        <div className="grid sm:grid-cols-2 gap-4 mb-8">
 
-            {!file ? (
-              <>
-                <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-red-500/10 flex items-center justify-center">
-                  <svg className="w-8 h-8 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-                    <path d="M12 2 L22 12 L12 22 L2 12 Z" strokeLinejoin="round"/>
-                    <circle cx="12" cy="12" r="3" fill="currentColor"/>
-                  </svg>
-                </div>
-                <p className="text-lg font-medium mb-2">drop your file here or click to browse</p>
-                <p className="text-sm text-gray-500">maximum file size: 1 gb</p>
-                <p className="text-xs text-gray-600 mt-2">for larger files, use zip compression to bring the size under 1gb</p>
-              </>
-            ) : (
-              <>
-                <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-red-500/10 flex items-center justify-center">
-                  <svg className="w-8 h-8 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-                    <path d="M12 2 L22 12 L12 22 L2 12 Z" strokeLinejoin="round"/>
-                    <circle cx="12" cy="12" r="3" fill="currentColor"/>
-                  </svg>
-                </div>
-                <p className="text-lg font-medium mb-1 truncate max-w-md mx-auto">{file.name}</p>
-                <p className="text-sm text-gray-500">{formatSize(file.size)}</p>
-                <button
-                  onClick={(e) => { e.stopPropagation(); setFile(null) }}
-                  className="mt-4 text-sm text-red-400 hover:text-red-300 transition-colors"
-                >
-                  remove file
-                </button>
-              </>
-            )}
+          <div
+            className={`border rounded-2xl p-1 transition-all duration-300 ${
+              dragOver ? 'border-red-500/60 scale-[1.01]' : 'border-red-500/20'
+            }`}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={handleDrop}
+          >
+            <div
+              className={`rounded-2xl p-8 sm:p-10 text-center h-full flex flex-col transition-all duration-300 cursor-pointer ${
+                dragOver ? 'bg-red-500/10' : 'bg-surface-800'
+              }`}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                onChange={(e) => handleFile(e.target.files[0])}
+              />
+
+              <div className="w-14 h-14 mx-auto mb-5 rounded-xl bg-red-500/10 flex items-center justify-center">
+                <svg className="w-7 h-7 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+                  <path d="M12 2 L22 12 L12 22 L2 12 Z" strokeLinejoin="round"/>
+                  <circle cx="12" cy="12" r="3" fill="currentColor"/>
+                </svg>
+              </div>
+
+              <p className="text-xs uppercase tracking-wider text-gray-500 mb-2">single file</p>
+
+              {!file ? (
+                <>
+                  <p className="font-medium mb-1">drop your file here</p>
+                  <p className="text-xs text-gray-600 mt-2">
+                    or click to browse &middot; max {formatLimit(MAX_FILE_SIZE)}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="font-medium mb-1 truncate">{file.name}</p>
+                  <p className="text-sm text-gray-500">{formatSize(file.size)}</p>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setFile(null) }}
+                    className="mt-4 text-sm text-red-400 hover:text-red-300 transition-colors"
+                  >
+                    remove
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div
+            className={`border rounded-2xl p-1 transition-all duration-300 ${
+              bundleDragOver ? 'border-red-500/60 scale-[1.01]' : 'border-red-500/20'
+            }`}
+            onDragOver={(e) => { e.preventDefault(); setBundleDragOver(true) }}
+            onDragLeave={() => setBundleDragOver(false)}
+            onDrop={handleBundleDrop}
+          >
+            <div
+              className={`rounded-2xl p-8 sm:p-10 text-center h-full flex flex-col transition-all duration-300 ${
+                bundleDragOver ? 'bg-red-500/10' : 'bg-surface-800'
+              }`}
+            >
+              <div className="w-14 h-14 mx-auto mb-5 rounded-xl bg-red-500/10 flex items-center justify-center">
+                <svg className="w-7 h-7 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+                  <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" strokeLinejoin="round"/>
+                </svg>
+              </div>
+
+              <p className="text-xs uppercase tracking-wider text-gray-500 mb-2">bundle</p>
+
+              {bundleFiles.length === 0 ? (
+                <>
+                  <p className="font-medium mb-1">drop your folder(s) here</p>
+                  <p className="text-xs text-gray-600 mt-2">or multiple files, or both</p>
+                </>
+              ) : (
+                <>
+                  <p className="font-medium mb-1">
+                    {bundleFiles.length} item{bundleFiles.length === 1 ? '' : 's'}
+                  </p>
+                  <p className="text-sm text-gray-500">{formatSize(totalSize(bundleFiles))}</p>
+                </>
+              )}
+
+              <div className="flex flex-wrap gap-2 justify-center mt-5">
+                <label className="px-3 py-2 rounded-lg bg-surface-600 hover:bg-surface-500 text-sm cursor-pointer transition-colors">
+                  select files
+                  <input
+                    type="file"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => addBundleFiles([...e.target.files])}
+                  />
+                </label>
+                <label className="px-3 py-2 rounded-lg bg-surface-600 hover:bg-surface-500 text-sm cursor-pointer transition-colors">
+                  select folder
+                  <input
+                    type="file"
+                    multiple
+                    webkitdirectory=""
+                    className="hidden"
+                    onChange={(e) => addBundleFiles([...e.target.files])}
+                  />
+                </label>
+              </div>
+
+              {bundleFiles.length > 0 && (
+                <>
+                  <input
+                    type="text"
+                    value={bundleName}
+                    onChange={(e) => setBundleName(e.target.value)}
+                    placeholder="bundle name"
+                    className="mt-4 w-full px-3 py-2 bg-surface-700/50 border border-white/10 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-red-500/50"
+                  />
+                  <ul className="mt-3 space-y-1 max-h-28 overflow-y-auto text-left">
+                    {bundleFiles.slice(0, 100).map((f, i) => (
+                      <li key={i} className="text-xs text-gray-500 truncate">
+                        {f.webkitRelativePath || f.name}
+                      </li>
+                    ))}
+                    {bundleFiles.length > 100 && (
+                      <li className="text-xs text-gray-600">+ {bundleFiles.length - 100} more</li>
+                    )}
+                  </ul>
+                  <button
+                    onClick={clearBundle}
+                    className="mt-4 text-sm text-red-400 hover:text-red-300 transition-colors"
+                  >
+                    clear
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         </div>
 
@@ -215,7 +414,9 @@ export default function Upload() {
           <div className="glass p-4 mb-6 border-red-500/20">
             <p className="text-sm text-red-400 mb-1">unfinished upload found</p>
             <p className="text-xs text-gray-500 mb-3">
-              {pending.filename} was interrupted. re-select the same file to resume from where it stopped.
+              {pending.filename} was interrupted. {resuming
+                ? 'now re-select the same file and upload to continue from where it stopped.'
+                : 're-select the same file to resume from where it stopped.'}
             </p>
             <div className="flex gap-2">
               <button
@@ -225,7 +426,7 @@ export default function Upload() {
                 discard
               </button>
               <button
-                onClick={() => setBundleMode(true)}
+                onClick={() => setResuming(true)}
                 className="px-3 py-1.5 rounded-lg bg-red-500 text-xs transition-colors"
               >
                 resume
@@ -234,7 +435,7 @@ export default function Upload() {
           </div>
         )}
 
-        {file && (
+        {(file || bundleFiles.length > 0) && (
           <div className="glass p-6 mb-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider mb-4">options</h3>
 
@@ -242,7 +443,11 @@ export default function Upload() {
               <div>
                 <p className="font-medium text-sm">compress before encrypting</p>
                 <p className="text-xs text-gray-500 mt-0.5">
-                  {useCompression ? 'smaller upload, more cpu' : 'best for code, text, executables'}
+                  {preparing
+                    ? 'compressing to measure size...'
+                    : prepared && useCompression && useEncryption && prepared.final !== prepared.raw
+                      ? `${formatSize(prepared.raw)} compresses to ${formatSize(prepared.final)}`
+                      : 'best for code, text, executables'}
                 </p>
               </div>
               <button
@@ -257,83 +462,6 @@ export default function Upload() {
               </button>
             </div>
 
-            <div className="flex items-center justify-between p-4 rounded-xl bg-surface-700/30 border border-white/5 mb-4">
-              <div>
-                <p className="font-medium text-sm">bundle multiple files</p>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  {files.length > 1 ? `${files.length} files selected` : 'send a folder as one link'}
-                </p>
-              </div>
-              <button
-                onClick={() => {
-                  setBundleMode(!bundleMode)
-                  if (bundleMode) { setFiles([]); setFile(null) }
-                }}
-                className={`relative w-11 h-6 rounded-full transition-colors duration-300 ${
-                  bundleMode ? 'bg-red-500' : 'bg-surface-600'
-                }`}
-              >
-                <div className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-300 ${
-                  bundleMode ? 'translate-x-5' : 'translate-x-0'
-                }`} />
-              </button>
-            </div>
-
-            {bundleMode && (
-              <div className="mb-4">
-                <label className="block text-xs text-gray-500 mb-2">bundle name</label>
-                <input
-                  type="text"
-                  value={bundleName}
-                  onChange={(e) => setBundleName(e.target.value)}
-                  placeholder="project"
-                  className="w-full px-3 py-2 mb-3 bg-surface-700/50 border border-white/10 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-red-500/50"
-                />
-                <div className="flex flex-wrap gap-2">
-                  <label className="px-3 py-2 rounded-lg bg-surface-600 hover:bg-surface-500 text-sm cursor-pointer transition-colors">
-                    choose files
-                    <input
-                      type="file"
-                      multiple
-                      className="hidden"
-                      onChange={(e) => {
-                        const list = [...e.target.files]
-                        setFiles(list)
-                        setFile(list[0] || null)
-                        if (!bundleName) setBundleName('bundle')
-                      }}
-                    />
-                  </label>
-                  <label className="px-3 py-2 rounded-lg bg-surface-600 hover:bg-surface-500 text-sm cursor-pointer transition-colors">
-                    choose folder
-                    <input
-                      type="file"
-                      multiple
-                      webkitdirectory=""
-                      className="hidden"
-                      onChange={(e) => {
-                        const list = [...e.target.files]
-                        setFiles(list)
-                        setFile(list[0] || null)
-                        if (!bundleName) setBundleName('bundle')
-                      }}
-                    />
-                  </label>
-                </div>
-                {files.length > 0 && (
-                  <ul className="mt-3 space-y-1 max-h-32 overflow-y-auto">
-                    {files.slice(0, 50).map((f, i) => (
-                      <li key={i} className="text-xs text-gray-500 truncate">
-                        {f.webkitRelativePath || f.name} <span className="text-gray-600">({formatSize(f.size)})</span>
-                      </li>
-                    ))}
-                    {files.length > 50 && (
-                      <li className="text-xs text-gray-600">+ {files.length - 50} more</li>
-                    )}
-                  </ul>
-                )}
-              </div>
-            )}
 
             <div className="grid sm:grid-cols-2 gap-4">
               <div className="flex items-center justify-between p-4 rounded-xl bg-surface-700/30 border border-white/5">
@@ -390,8 +518,16 @@ export default function Upload() {
           </div>
         )}
 
-        {file && !uploading && (
+        {(file || bundleFiles.length > 0) && !uploading && (
           <div className="text-center mb-8">
+            {rawSize > 0 && (
+              <p className="text-xs text-gray-500 mb-3">
+                {formatSize(rawSize)} selected, limit {formatLimit(MAX_FILE_SIZE)}
+                {prepared && useCompression && useEncryption && prepared.final !== rawSize && (
+                  <> &middot; {formatSize(prepared.final)} after compression</>
+                )}
+              </p>
+            )}
             <div className="glass p-4 mb-4 max-w-md mx-auto">
               <input
                 ref={honeypotRef}
@@ -407,7 +543,8 @@ export default function Upload() {
                   type="checkbox"
                   checked={captchaVerified}
                   onChange={async (e) => {
-                    if (e.target.checked && !captchaToken) {
+                    const checked = e.target.checked
+                    if (checked && !captchaToken) {
                       try {
                         const res = await fetch(`${import.meta.env.CB_API_URL || ''}/api/captcha/token`)
                         const data = await res.json()
@@ -417,15 +554,19 @@ export default function Upload() {
                         return
                       }
                     }
-                    setCaptchaVerified(e.target.checked)
+                    setCaptchaVerified(checked)
                   }}
                   className="w-5 h-5 rounded border border-white/20 bg-surface-700 text-red-500 focus:ring-red-500/50"
                 />
                 <span className="text-sm text-gray-300">I am not a robot.</span>
               </label>
             </div>
-            <button onClick={handleUpload} className="btn-primary text-lg px-10 py-4">
-              {useEncryption ? 'encrypt & upload' : 'upload file'}
+            <button
+              onClick={handleUpload}
+              disabled={preparing || overLimit}
+              className="btn-primary text-lg px-10 py-4"
+            >
+              {preparing ? 'preparing...' : overLimit ? 'over size limit' : useEncryption ? 'encrypt & upload' : 'upload file'}
             </button>
           </div>
         )}
@@ -592,6 +733,8 @@ function UploadProgress({ stats }) {
     )
   }
 
+  const compressing = stats.phase === 'compressing'
+
   const current = stats.chunks[stats.chunkIndex]
   const percent = current && current.total
     ? Math.min(100, Math.round((current.loaded / current.total) * 100))
@@ -601,7 +744,9 @@ function UploadProgress({ stats }) {
     <div>
       <div className="flex justify-between text-sm mb-2">
         <span className="text-gray-400">
-          uploading chunk {stats.chunkIndex + 1} of {stats.totalParts}
+          {compressing
+            ? 'compressing'
+            : `uploading chunk ${stats.chunkIndex + 1} of ${stats.totalParts}`}
         </span>
         <span className="text-red-400">{percent}%</span>
       </div>
@@ -612,11 +757,13 @@ function UploadProgress({ stats }) {
 
       <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 mt-3 text-xs text-gray-500">
         <span>
-          {formatBytes(current?.loaded || 0)} of {formatBytes(current?.total || 0)} in this chunk
+          {compressing
+            ? `${formatBytes(stats.loaded)} of ${formatBytes(stats.total)} processed`
+            : `${formatBytes(current?.loaded || 0)} of ${formatBytes(current?.total || 0)} in this chunk`}
         </span>
-        {stats.rate > 0 && <span>{formatBytes(stats.rate)}/s</span>}
+        {!compressing && stats.rate > 0 && <span>{formatBytes(stats.rate)}/s</span>}
         <span>{formatDuration(stats.elapsedMs)} elapsed</span>
-        {stats.etaMs != null && stats.etaMs > 0 && stats.loaded < stats.total && (
+        {!compressing && stats.etaMs != null && stats.etaMs > 0 && stats.loaded < stats.total && (
           <span>~{formatDuration(stats.etaMs)} left</span>
         )}
       </div>
