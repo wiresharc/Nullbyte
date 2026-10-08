@@ -111,7 +111,7 @@ function safeName(name, fallback) {
           parts.push(part.bytes)
           decryptedBytes += part.bytes.length
           if (contentLength) {
-            setDecryptProgress(Math.min(99, Math.round((decryptedBytes / contentLength) * 100)))
+            setDecryptProgress(Math.min(100, Math.round((decryptedBytes / contentLength) * 100)))
           }
         }
 
@@ -191,18 +191,51 @@ function safeName(name, fallback) {
     setDownloading(false)
   }
 
+  const [savingAll, setSavingAll] = useState(false)
+  const [savedAll, setSavedAll] = useState(false)
+
   const saveBundleEntry = async (entry) => {
     if (!bundle) return
+    const slice = bundle.data.subarray(entry.o, entry.o + entry.s)
+    const name = entry.n.split('/').pop() || 'file'
     try {
-      const slice = bundle.data.subarray(entry.o, entry.o + entry.s)
-      const handle = await window.showSaveFilePicker({
-        suggestedName: entry.n.split('/').pop() || 'file',
-      })
+      const handle = await window.showSaveFilePicker({ suggestedName: name })
       const writable = await handle.createWritable()
       await writable.write(slice)
       await writable.close()
-    } catch {
-      downloadBlob([bundle.data.subarray(entry.o, entry.o + entry.s)], entry.n.split('/').pop() || 'file')
+    } catch (err) {
+      if (err && err.name === 'AbortError') return
+      downloadBlob([slice], name)
+    }
+  }
+
+  // chromium can write the whole tree into one directory pick, everywhere else
+  // falls back to saving each entry in turn
+  const saveAllEntries = async () => {
+    if (!bundle || savingAll) return
+    setSavingAll(true)
+    setSavedAll(false)
+
+    try {
+      if (typeof window.showDirectoryPicker === 'function') {
+        const dir = await window.showDirectoryPicker({ mode: 'readwrite' })
+        for (const entry of bundle.entries) {
+          const name = entry.n.split('/').pop() || 'file'
+          const handle = await dir.getFileHandle(name, { create: true })
+          const writable = await handle.createWritable()
+          await writable.write(bundle.data.subarray(entry.o, entry.o + entry.s))
+          await writable.close()
+        }
+      } else {
+        for (const entry of bundle.entries) {
+          await saveBundleEntry(entry)
+        }
+      }
+      setSavedAll(true)
+    } catch (err) {
+      if (!err || err.name !== 'AbortError') setError(err.message || 'could not save the files')
+    } finally {
+      setSavingAll(false)
     }
   }
 
@@ -329,9 +362,22 @@ function safeName(name, fallback) {
 
             {bundle && (
               <div className="mt-6">
-                <p className="text-xs text-gray-500 uppercase tracking-wider mb-3">
-                  {bundle.entries.length} files
-                </p>
+                <div className="flex items-center justify-between gap-2 mb-3">
+                  <p className="text-xs text-gray-500 uppercase tracking-wider">
+                    {bundle.entries.length} files
+                  </p>
+                  <button
+                    onClick={saveAllEntries}
+                    disabled={savingAll}
+                    className="px-3 py-1.5 rounded-lg bg-red-500 hover:bg-red-600 text-xs
+                               transition-colors disabled:opacity-50"
+                  >
+                    {savingAll ? 'saving...' : 'download all files'}
+                  </button>
+                </div>
+                {savedAll && (
+                  <p className="text-xs text-green-400 mb-2">all files saved</p>
+                )}
                 <ul className="space-y-1">
                   {bundle.entries.map((entry, i) => (
                     <li key={i}>

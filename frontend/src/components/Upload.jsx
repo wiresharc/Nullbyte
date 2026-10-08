@@ -134,6 +134,10 @@ export default function Upload() {
     setBundleName('')
   }, [])
 
+  const removeBundleFile = useCallback((index) => {
+    setBundleFiles((prev) => prev.filter((_, i) => i !== index))
+  }, [])
+
   const handleUpload = async () => {
     if (!file && bundleFiles.length === 0) return
     if (!captchaVerified) {
@@ -388,22 +392,34 @@ export default function Upload() {
                     placeholder="bundle name"
                     className="mt-4 w-full px-3 py-2 bg-surface-700/50 border border-white/10 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-red-500/50"
                   />
-                  <ul className="mt-3 space-y-1 max-h-28 overflow-y-auto text-left">
-                    {bundleFiles.slice(0, 100).map((f, i) => (
-                      <li key={i} className="text-xs text-gray-500 truncate">
-                        {f.webkitRelativePath || f.name}
+                  <ul className="mt-3 space-y-1 max-h-40 overflow-y-auto text-left">
+                    {bundleFiles.map((f, i) => (
+                      <li
+                        key={`${f.webkitRelativePath || f.name}-${i}`}
+                        className="flex items-center gap-2 text-xs text-gray-500 group"
+                      >
+                        <span className="flex-1 truncate">{f.webkitRelativePath || f.name}</span>
+                        <span className="text-gray-600 shrink-0">{formatSize(f.size)}</span>
+                        <button
+                          onClick={() => removeBundleFile(i)}
+                          aria-label={`remove ${f.webkitRelativePath || f.name}`}
+                          title="remove this file"
+                          className="shrink-0 w-5 h-5 rounded hover:bg-red-500/20 hover:text-red-400
+                                     text-gray-600 transition-colors leading-none"
+                        >
+                          &times;
+                        </button>
                       </li>
                     ))}
-                    {bundleFiles.length > 100 && (
-                      <li className="text-xs text-gray-600">+ {bundleFiles.length - 100} more</li>
-                    )}
                   </ul>
-                  <button
-                    onClick={clearBundle}
-                    className="mt-4 text-sm text-red-400 hover:text-red-300 transition-colors"
-                  >
-                    clear
-                  </button>
+                  {bundleFiles.length > 1 && (
+                    <button
+                      onClick={clearBundle}
+                      className="mt-3 text-sm text-red-400 hover:text-red-300 transition-colors"
+                    >
+                      clear all
+                    </button>
+                  )}
                 </>
               )}
             </div>
@@ -735,9 +751,10 @@ function UploadProgress({ stats }) {
 
   const compressing = stats.phase === 'compressing'
 
-  const current = stats.chunks[stats.chunkIndex]
-  const percent = current && current.total
-    ? Math.min(100, Math.round((current.loaded / current.total) * 100))
+  const chunkLoaded = stats.chunkLoaded || 0
+  const chunkTotal = stats.chunkTotal || 0
+  const percent = chunkTotal
+    ? Math.min(100, Math.round((chunkLoaded / chunkTotal) * 100))
     : 0
 
   return (
@@ -759,7 +776,7 @@ function UploadProgress({ stats }) {
         <span>
           {compressing
             ? `${formatBytes(stats.loaded)} of ${formatBytes(stats.total)} processed`
-            : `${formatBytes(current?.loaded || 0)} of ${formatBytes(current?.total || 0)} in this chunk`}
+            : `${formatBytes(chunkLoaded)} of ${formatBytes(chunkTotal)} in this chunk`}
         </span>
         {!compressing && stats.rate > 0 && <span>{formatBytes(stats.rate)}/s</span>}
         <span>{formatDuration(stats.elapsedMs)} elapsed</span>

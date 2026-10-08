@@ -266,7 +266,6 @@ export async function uploadBlob(blob, opts) {
       rate,
       elapsedMs: now - startedAt,
       etaMs: rate > 0 ? ((planData.totalSize - done) / rate) * 1000 : null,
-      chunks: [{ loaded: withinPart, total: partBytes }],
     })
   }
 
@@ -324,11 +323,11 @@ export async function uploadBlob(blob, opts) {
     const res = await sendWithRetry(
       url,
       () => formData,
-      (within) => report(part.index, within, slice.size),
+      (within) => report(part.index, within, slice.length),
       signal
     )
 
-    uploaded = base + slice.size
+    uploaded = base + slice.length
 
     if (res.upload_id) {
       uploadId = res.upload_id
@@ -337,7 +336,7 @@ export async function uploadBlob(blob, opts) {
     }
     if (res.token) token = res.token
 
-    report(part.index, slice.size, slice.size)
+    report(part.index, slice.length, slice.length)
 
     if (res.done) {
       clearPendingUpload()
