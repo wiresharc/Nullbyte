@@ -7,7 +7,13 @@ function readBatch(reader) {
 async function walkEntry(entry, prefix, out) {
   if (entry.isFile) {
     const file = await new Promise((resolve, reject) => entry.file(resolve, reject))
-    out.push(Object.assign(file, { webkitRelativePath: prefix + entry.name }))
+    // webkitRelativePath is a getter only accessor on File.prototype in both
+    // chromium and firefox, so assigning to it throws
+    Object.defineProperty(file, 'webkitRelativePath', {
+      value: prefix + entry.name,
+      configurable: true,
+    })
+    out.push(file)
     return
   }
 

@@ -93,25 +93,38 @@ function safeName(name, fallback) {
 
       if (!probe.header) throw new Error('file header is malformed')
 
-      const bundleInfo = probe.firstPlain ? decodeBundleHeader(probe.firstPlain) : null
+      // a compressed bundle hides its manifest behind the gzip layer, so it can only be
+      // identified after decompressing, which forces it down the buffered path
+      const isCompressed = probe.header.compressed
+      const bundleInfo = !isCompressed && probe.firstPlain
+        ? decodeBundleHeader(probe.firstPlain)
+        : null
 
-      // bundles stay in memory so the file list can be offered; single files stream
-      if (bundleInfo || !canStream || !isLarge) {
+      if (bundleInfo || isCompressed || !canStream || !isLarge) {
         const parts = []
+        let decryptedBytes = 0
         const stream = await openEncryptedStream(
           probe.reader, probe.prefix, cryptoKey, baseNonce, () => {},
           probe.firstPlain
         )
-        for await (const part of stream.read()) parts.push(part.bytes)
+        for await (const part of stream.read()) {
+          parts.push(part.bytes)
+          decryptedBytes += part.bytes.length
+          if (contentLength) {
+            setDecryptProgress(Math.min(99, Math.round((decryptedBytes / contentLength) * 100)))
+          }
+        }
 
         let plain = concat(parts)
 
-        if (probe.header.compressed) {
+        if (isCompressed) {
           plain = new Uint8Array(await (await decompressBlob(new Blob([plain]))).arrayBuffer())
         }
 
-        if (bundleInfo) {
-          setBundle({ entries: bundleInfo.entries, data: plain.subarray(bundleInfo.consumed) })
+        const detected = bundleInfo || decodeBundleHeader(plain)
+
+        if (detected) {
+          setBundle({ entries: detected.entries, data: plain.subarray(detected.consumed) })
           setDownloadedName(probe.header.name || 'bundle')
           setProgress(100)
           return
