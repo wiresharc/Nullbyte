@@ -190,6 +190,10 @@ func (s *Store) PartPath(uploadID string, index int) string {
 	return filepath.Join(s.stagingDir, uploadID+"."+strconv.Itoa(index)+stagingSuffix)
 }
 
+func (s *Store) PartTmpPath(uploadID string, index int) string {
+	return s.PartPath(uploadID, index) + ".tmp"
+}
+
 func (s *Store) LoadSession(uploadID string) (*models.UploadSession, error) {
 	data, err := os.ReadFile(s.SessionPath(uploadID))
 	if err != nil {
@@ -214,7 +218,19 @@ func (s *Store) DropSession(session models.UploadSession) {
 	os.Remove(s.SessionPath(session.UploadID))
 	for i := 0; i < session.TotalParts; i++ {
 		os.Remove(s.PartPath(session.UploadID, i))
+		os.Remove(s.PartTmpPath(session.UploadID, i))
 	}
+}
+
+// counts only parts that landed atomically, never a half written temp file
+func (s *Store) ReceivedParts(uploadID string, totalParts int) []int {
+	received := make([]int, 0, totalParts)
+	for i := 0; i < totalParts; i++ {
+		if _, err := os.Stat(s.PartPath(uploadID, i)); err == nil {
+			received = append(received, i)
+		}
+	}
+	return received
 }
 
 func (s *Store) CleanupStaging() {

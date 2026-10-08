@@ -26,10 +26,10 @@ func main() {
 	uploadDir := "./uploads"
 	os.MkdirAll(uploadDir, 0755)
 
-	maxStorage := envInt64("MAX_STORAGE_BYTES", 100*1024*1024*1024)
-	maxFile := envInt64("MAX_UPLOAD_BYTES", 1024*1024*1024)
+	maxStorage := envInt64("MAX_STORAGE_BYTES", 200*1024*1024*1024)
+	maxFile := envInt64("MAX_UPLOAD_BYTES", 2*1024*1024*1024)
 	maxChunk := envInt64("MAX_CHUNK_BYTES", 90*1024*1024)
-	quotaBytes := envInt64("UPLOAD_QUOTA_BYTES", 2*1024*1024*1024)
+	quotaBytes := envInt64("UPLOAD_QUOTA_BYTES", 4*1024*1024*1024)
 	maxConcurrent := int(envInt64("MAX_CONCURRENT_UPLOADS", 4))
 	readTimeout := time.Duration(envInt64("UPLOAD_READ_TIMEOUT_SECONDS", 1800)) * time.Second
 	writeTimeout := time.Duration(envInt64("UPLOAD_WRITE_TIMEOUT_SECONDS", 1800)) * time.Second
@@ -47,11 +47,13 @@ func main() {
 	uploadHandler := handlers.NewUploadHandler(store, maxConcurrent, quotaBytes, maxFile, maxChunk, readTimeout, writeTimeout)
 	downloadHandler := handlers.NewDownloadHandler(store)
 	infoHandler := handlers.NewInfoHandler(store)
+	uploadStatus := handlers.NewUploadHandlerStatus(store)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/upload", uploadHandler.Handle)
 	mux.HandleFunc("/api/download/", downloadHandler.Handle)
 	mux.HandleFunc("/api/info/", infoHandler.Handle)
+	mux.HandleFunc("/api/upload/status", uploadStatus.Handle)
 	mux.HandleFunc("/api/captcha/token", func(w http.ResponseWriter, r *http.Request) {
 		token, err := middleware.GenerateCaptchaToken()
 		if err != nil {

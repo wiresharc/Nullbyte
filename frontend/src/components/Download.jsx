@@ -1,6 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
-import { importKey, decryptFile, downloadBlob, concatChunks, readHeader } from '../crypto/encryption'
+import { importKey, decryptFile, downloadBlob, concatChunks, readHeader, ENC_CHUNK, ciphertextSize } from '../crypto/encryption'
+import { sniff, openEncryptedStream, pullUntil, TAU, concat } from '../crypto/streaming'
+import { decodeBundleHeader } from '../crypto/bundle'
+import { decompressBlob } from '../crypto/compress'
+
+const INLINE_LIMIT = 64 * 1024 * 1024
 
 export default function Download() {
   const { token } = useParams()
@@ -9,6 +14,8 @@ export default function Download() {
   const [downloading, setDownloading] = useState(false)
   const [progress, setProgress] = useState(0)
   const [decryptProgress, setDecryptProgress] = useState(0)
+  const [bundle, setBundle] = useState(null)
+  const [downloadedName, setDownloadedName] = useState(null)
 
   const hash = window.location.hash
   const keyMatch = hash.match(/#key=([^&]+)/)
@@ -46,61 +53,125 @@ function safeName(name, fallback) {
     setDownloading(true)
     setProgress(0)
     setDecryptProgress(0)
+    setError(null)
+    setBundle(null)
+    setDownloadedName(null)
 
     try {
       const response = await fetch(`${import.meta.env.CB_API_URL || ''}/api/download/${token}`)
       if (!response.ok) throw new Error('download failed')
 
-      const contentLength = +response.headers.get('Content-Length')
-      const reader = response.body.getReader()
-      const chunks = []
-      let received = 0
+      const contentLength = +response.headers.get('Content-Length') || 0
+      const canStream = typeof window.showSaveFilePicker === 'function'
+      const isLarge = contentLength > INLINE_LIMIT
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        chunks.push(value)
-        received += value.length
-        if (contentLength) {
-          setProgress(Math.round((received / contentLength) * 100))
-        }
-      }
-
-      const encryptedData = new Uint8Array(received)
-      let offset = 0
-      for (const chunk of chunks) {
-        encryptedData.set(chunk, offset)
-        offset += chunk.length
-      }
-
-      if (encryptionKey) {
-        const { cryptoKey, baseNonce } = await importKey(encryptionKey)
-        const decryptedChunks = await decryptFile(encryptedData, cryptoKey, baseNonce, (p) => {
-          setDecryptProgress(p)
-        })
-
-        const parsed = readHeader(concatChunks(decryptedChunks))
-
-        if (parsed) {
-          downloadBlob(
-            [parsed.data],
-            safeName(parsed.name, 'downloaded_file'),
-            parsed.type || 'application/octet-stream'
-          )
-        } else {
-          downloadBlob(decryptedChunks, 'downloaded_file', 'application/octet-stream')
-        }
-      } else {
+      if (!encryptionKey) {
         const name = fileInfo?.original_name || 'downloaded_file'
         const mime = fileInfo?.file_type || 'application/octet-stream'
-        downloadBlob([encryptedData], name, mime)
+
+        if (canStream && isLarge) {
+          const handle = await window.showSaveFilePicker({ suggestedName: name })
+          await response.body.pipeTo(await handle.createWritable())
+        } else {
+          downloadBlob([new Uint8Array(await response.arrayBuffer())], name, mime)
+        }
+
+        setProgress(100)
+        setDownloadedName(name)
+        return
       }
 
+      const { cryptoKey, baseNonce } = await importKey(encryptionKey)
+      const probe = await sniff(response, cryptoKey, baseNonce)
+
+      if (!probe.header) throw new Error('file header is malformed')
+
+      const bundleInfo = probe.firstPlain ? decodeBundleHeader(probe.firstPlain) : null
+
+      // bundles stay in memory so the file list can be offered; single files stream
+      if (bundleInfo || !canStream || !isLarge) {
+        const parts = []
+        const stream = await openEncryptedStream(
+          probe.reader, probe.prefix, cryptoKey, baseNonce, () => {},
+          probe.firstPlain
+        )
+        for await (const part of stream.read()) parts.push(part.bytes)
+
+        let plain = concat(parts)
+
+        if (probe.header.compressed) {
+          plain = new Uint8Array(await (await decompressBlob(new Blob([plain]))).arrayBuffer())
+        }
+
+        if (bundleInfo) {
+          setBundle({ entries: bundleInfo.entries, data: plain.subarray(bundleInfo.consumed) })
+          setDownloadedName(probe.header.name || 'bundle')
+          setProgress(100)
+          return
+        }
+
+        downloadBlob(
+          [plain],
+          probe.header.name || 'downloaded_file',
+          probe.header.type || 'application/octet-stream'
+        )
+        setDownloadedName(probe.header.name || 'downloaded_file')
+        setProgress(100)
+        return
+      }
+
+      const handle = await window.showSaveFilePicker({
+        suggestedName: probe.header.name || 'download',
+      })
+      const writable = await handle.createWritable()
+
+      if (probe.header.compressed) {
+        const ds = new DecompressionStream('gzip')
+        const pump = ds.readable.pipeTo(writable)
+        const writer = ds.writable.getWriter()
+
+        const stream = await openEncryptedStream(
+          probe.reader, probe.prefix, cryptoKey, baseNonce,
+          () => {}, probe.firstPlain
+        )
+        for await (const part of stream.read()) await writer.write(part.bytes)
+        await writer.close()
+        await pump
+      } else {
+        const stream = await openEncryptedStream(
+          probe.reader, probe.prefix, cryptoKey, baseNonce,
+          () => {}, probe.firstPlain
+        )
+        for await (const part of stream.read()) await writable.write(part.bytes)
+        await writable.close()
+      }
+
+      setProgress(100)
+      setDownloadedName(probe.header.name || 'download')
     } catch (err) {
-      setError(err.message || 'download failed')
+      if (err && err.name === 'AbortError') {
+        setError('download cancelled')
+      } else {
+        setError(err.message || 'download failed')
+      }
     }
 
     setDownloading(false)
+  }
+
+  const saveBundleEntry = async (entry) => {
+    if (!bundle) return
+    try {
+      const slice = bundle.data.subarray(entry.o, entry.o + entry.s)
+      const handle = await window.showSaveFilePicker({
+        suggestedName: entry.n.split('/').pop() || 'file',
+      })
+      const writable = await handle.createWritable()
+      await writable.write(slice)
+      await writable.close()
+    } catch {
+      downloadBlob([bundle.data.subarray(entry.o, entry.o + entry.s)], entry.n.split('/').pop() || 'file')
+    }
   }
 
   const formatSize = (bytes) => {
@@ -221,8 +292,29 @@ function safeName(name, fallback) {
               disabled={downloading}
               className="btn-primary w-full py-4 text-lg"
             >
-              {downloading ? 'processing...' : 'download file'}
+              {downloading ? 'processing...' : bundle ? 'decrypt bundle' : 'download file'}
             </button>
+
+            {bundle && (
+              <div className="mt-6">
+                <p className="text-xs text-gray-500 uppercase tracking-wider mb-3">
+                  {bundle.entries.length} files
+                </p>
+                <ul className="space-y-1">
+                  {bundle.entries.map((entry, i) => (
+                    <li key={i}>
+                      <button
+                        onClick={() => saveBundleEntry(entry)}
+                        className="w-full text-left px-3 py-2 rounded-lg bg-surface-700/40 border border-white/5 hover:bg-surface-700 text-sm transition-colors"
+                      >
+                        <span className="block truncate">{entry.n}</span>
+                        <span className="text-xs text-gray-500">{formatSize(entry.s)}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {encryptionKey && (
               <p className="text-xs text-gray-600 text-center mt-3">

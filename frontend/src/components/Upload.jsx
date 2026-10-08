@@ -1,16 +1,15 @@
-import { useState, useCallback, useRef } from 'react'
-import { generateKeyMaterial, encryptFile, exportKey } from '../crypto/encryption'
-import { uploadBlob } from '../api/upload'
+import { useState, useCallback, useRef, useEffect } from 'react'
+import { generateKeyMaterial, exportKey } from '../crypto/encryption'
+import { encodeBundle } from '../crypto/bundle'
+import { uploadBlob, readPendingUpload, clearPendingUpload } from '../api/upload'
 import DownloadLookup from './DownloadLookup'
 
 const MAX_FILE_SIZE = 1024 * 1024 * 1024
 
 export default function Upload() {
   const [file, setFile] = useState(null)
-  const [encrypting, setEncrypting] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadStats, setUploadStats] = useState(null)
-  const [encryptProgress, setEncryptProgress] = useState(0)
   const [useEncryption, setUseEncryption] = useState(true)
   const [downloadMode, setDownloadMode] = useState('single')
   const [result, setResult] = useState(null)
@@ -20,6 +19,16 @@ export default function Upload() {
   const [captchaToken, setCaptchaToken] = useState(null)
   const fileInputRef = useRef(null)
   const honeypotRef = useRef(null)
+  const abortRef = useRef(null)
+  const [files, setFiles] = useState([])
+  const [bundleMode, setBundleMode] = useState(false)
+  const [useCompression, setUseCompression] = useState(false)
+  const [bundleName, setBundleName] = useState('')
+  const [pending, setPending] = useState(null)
+
+  useEffect(() => {
+    setPending(readPendingUpload())
+  }, [])
 
   const handleFile = useCallback((f) => {
     if (!f) return
@@ -46,36 +55,55 @@ export default function Upload() {
       return
     }
 
+    abortRef.current = new AbortController()
     setUploading(true)
     setUploadStats(null)
     setError(null)
     setResult(null)
 
     try {
+      const parts = [file]
       let payload = file
+      let displayName = file.name
+      let bundleEntries = null
+
+      if (bundleMode && files.length > 1) {
+        const { manifestBlob, dataSize, count } = encodeBundle(files)
+        payload = new Blob([manifestBlob, ...files])
+        displayName = bundleName || 'bundle'
+        bundleEntries = { count, dataSize }
+      } else if (bundleMode && files.length === 1) {
+        payload = files[0]
+        displayName = files[0].name
+      }
+
       let keyFragment = null
+      let cryptoKey = null
+      let baseNonce = null
+      let keyB64 = null
 
       if (useEncryption) {
-        setEncrypting(true)
-        setEncryptProgress(0)
-
-        const { keyBytes, baseNonce, cryptoKey } = await generateKeyMaterial()
-        const encryptedChunks = await encryptFile(file, cryptoKey, baseNonce, (p) => {
-          setEncryptProgress(p)
-        }, file.name, file.type)
-
-        payload = new Blob(encryptedChunks)
-        keyFragment = exportKey(keyBytes, baseNonce)
-        setEncrypting(false)
+        const material = await generateKeyMaterial()
+        cryptoKey = material.cryptoKey
+        baseNonce = material.baseNonce
+        keyB64 = exportKey(material.keyBytes, material.baseNonce)
+        keyFragment = keyB64
       }
 
       const response = await uploadBlob(payload, {
         apiUrl: import.meta.env.CB_API_URL || '',
         downloads: downloadMode,
-        encrypted: useEncryption ? 'true' : 'false',
+        encrypted: useEncryption,
+        cryptoKey,
+        baseNonce,
+        keyB64,
+        name: displayName,
+        type: file.type || 'application/octet-stream',
+        compress: useEncryption && useCompression,
         captchaToken,
         honeypot: honeypotRef.current?.value || '',
-        filename: useEncryption ? 'encrypted.bin' : file.name,
+        filename: useEncryption ? 'encrypted.bin' : displayName,
+        signal: abortRef.current?.signal,
         onProgress: (stats) => setUploadStats(stats),
       })
 
@@ -88,6 +116,7 @@ export default function Upload() {
 
       setResult({
         url: shareUrl,
+        bundleEntries,
         token: response.token,
         key: keyFragment,
         size: response.size,
@@ -96,7 +125,12 @@ export default function Upload() {
       })
 
     } catch (err) {
-      setError(err.message || 'upload failed')
+      if (err && err.name === 'AbortError') {
+        clearPendingUpload()
+        setError('upload cancelled')
+      } else {
+        setError(err.message || 'upload failed')
+      }
       setCaptchaToken(null)
       setCaptchaVerified(false)
     }
@@ -177,9 +211,129 @@ export default function Upload() {
           </div>
         </div>
 
+        {pending && (
+          <div className="glass p-4 mb-6 border-red-500/20">
+            <p className="text-sm text-red-400 mb-1">unfinished upload found</p>
+            <p className="text-xs text-gray-500 mb-3">
+              {pending.filename} was interrupted. re-select the same file to resume from where it stopped.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setPending(null); clearPendingUpload() }}
+                className="px-3 py-1.5 rounded-lg bg-surface-600 text-xs transition-colors"
+              >
+                discard
+              </button>
+              <button
+                onClick={() => setBundleMode(true)}
+                className="px-3 py-1.5 rounded-lg bg-red-500 text-xs transition-colors"
+              >
+                resume
+              </button>
+            </div>
+          </div>
+        )}
+
         {file && (
           <div className="glass p-6 mb-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider mb-4">options</h3>
+
+            <div className="flex items-center justify-between p-4 rounded-xl bg-surface-700/30 border border-white/5 mb-4">
+              <div>
+                <p className="font-medium text-sm">compress before encrypting</p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {useCompression ? 'smaller upload, more cpu' : 'best for code, text, executables'}
+                </p>
+              </div>
+              <button
+                onClick={() => setUseCompression(!useCompression)}
+                className={`relative w-11 h-6 rounded-full transition-colors duration-300 ${
+                  useCompression ? 'bg-red-500' : 'bg-surface-600'
+                }`}
+              >
+                <div className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-300 ${
+                  useCompression ? 'translate-x-5' : 'translate-x-0'
+                }`} />
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between p-4 rounded-xl bg-surface-700/30 border border-white/5 mb-4">
+              <div>
+                <p className="font-medium text-sm">bundle multiple files</p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {files.length > 1 ? `${files.length} files selected` : 'send a folder as one link'}
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setBundleMode(!bundleMode)
+                  if (bundleMode) { setFiles([]); setFile(null) }
+                }}
+                className={`relative w-11 h-6 rounded-full transition-colors duration-300 ${
+                  bundleMode ? 'bg-red-500' : 'bg-surface-600'
+                }`}
+              >
+                <div className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-300 ${
+                  bundleMode ? 'translate-x-5' : 'translate-x-0'
+                }`} />
+              </button>
+            </div>
+
+            {bundleMode && (
+              <div className="mb-4">
+                <label className="block text-xs text-gray-500 mb-2">bundle name</label>
+                <input
+                  type="text"
+                  value={bundleName}
+                  onChange={(e) => setBundleName(e.target.value)}
+                  placeholder="project"
+                  className="w-full px-3 py-2 mb-3 bg-surface-700/50 border border-white/10 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-red-500/50"
+                />
+                <div className="flex flex-wrap gap-2">
+                  <label className="px-3 py-2 rounded-lg bg-surface-600 hover:bg-surface-500 text-sm cursor-pointer transition-colors">
+                    choose files
+                    <input
+                      type="file"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => {
+                        const list = [...e.target.files]
+                        setFiles(list)
+                        setFile(list[0] || null)
+                        if (!bundleName) setBundleName('bundle')
+                      }}
+                    />
+                  </label>
+                  <label className="px-3 py-2 rounded-lg bg-surface-600 hover:bg-surface-500 text-sm cursor-pointer transition-colors">
+                    choose folder
+                    <input
+                      type="file"
+                      multiple
+                      webkitdirectory=""
+                      className="hidden"
+                      onChange={(e) => {
+                        const list = [...e.target.files]
+                        setFiles(list)
+                        setFile(list[0] || null)
+                        if (!bundleName) setBundleName('bundle')
+                      }}
+                    />
+                  </label>
+                </div>
+                {files.length > 0 && (
+                  <ul className="mt-3 space-y-1 max-h-32 overflow-y-auto">
+                    {files.slice(0, 50).map((f, i) => (
+                      <li key={i} className="text-xs text-gray-500 truncate">
+                        {f.webkitRelativePath || f.name} <span className="text-gray-600">({formatSize(f.size)})</span>
+                      </li>
+                    ))}
+                    {files.length > 50 && (
+                      <li className="text-xs text-gray-600">+ {files.length - 50} more</li>
+                    )}
+                  </ul>
+                )}
+              </div>
+            )}
 
             <div className="grid sm:grid-cols-2 gap-4">
               <div className="flex items-center justify-between p-4 rounded-xl bg-surface-700/30 border border-white/5">
@@ -219,24 +373,24 @@ export default function Upload() {
           </div>
         )}
 
-        {(encrypting || uploading) && (
+        {uploading && (
           <div className="glass p-6 mb-8">
-            {encrypting && (
-              <div className="mb-4">
-                <div className="flex justify-between text-sm mb-2">
-                  <span className="text-gray-400">encrypting...</span>
-                  <span className="text-red-400">{encryptProgress}%</span>
-                </div>
-                <div className="progress-bar">
-                  <div className="progress-fill" style={{ width: `${encryptProgress}%` }} />
-                </div>
-              </div>
-            )}
-            {uploading && <UploadProgress stats={uploadStats} />}
+            <UploadProgress stats={uploadStats} />
+            <div className="text-center mt-4">
+              <button
+                onClick={() => {
+                  if (abortRef.current) abortRef.current.abort()
+                  clearPendingUpload()
+                }}
+                className="text-sm text-gray-500 hover:text-red-400 transition-colors"
+              >
+                cancel upload
+              </button>
+            </div>
           </div>
         )}
 
-        {file && !uploading && !encrypting && (
+        {file && !uploading && (
           <div className="text-center mb-8">
             <div className="glass p-4 mb-4 max-w-md mx-auto">
               <input

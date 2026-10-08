@@ -136,7 +136,10 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 }
 
 func writePart(part io.Reader, destPath string, limit int64) (int64, []byte, error) {
-	dest, err := os.Create(destPath)
+	tmpPath := destPath + ".tmp"
+	os.Remove(tmpPath)
+
+	dest, err := os.Create(tmpPath)
 	if err != nil {
 		return 0, nil, errPartIO
 	}
@@ -145,7 +148,7 @@ func writePart(part io.Reader, destPath string, limit int64) (int64, []byte, err
 	head := make([]byte, 512)
 	headN, readErr := io.ReadFull(part, head)
 	if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF {
-		os.Remove(destPath)
+		os.Remove(tmpPath)
 		return 0, nil, errPartIO
 	}
 
@@ -154,7 +157,7 @@ func writePart(part io.Reader, destPath string, limit int64) (int64, []byte, err
 		n, werr := dest.Write(head[:headN])
 		written = int64(n)
 		if werr != nil {
-			os.Remove(destPath)
+			os.Remove(tmpPath)
 			return 0, nil, errPartIO
 		}
 	}
@@ -162,12 +165,23 @@ func writePart(part io.Reader, destPath string, limit int64) (int64, []byte, err
 	rest, copyErr := io.Copy(dest, io.LimitReader(part, limit+1-written))
 	written += rest
 	if copyErr != nil {
-		os.Remove(destPath)
+		os.Remove(tmpPath)
 		return 0, nil, errPartIO
 	}
 	if written > limit {
-		os.Remove(destPath)
+		os.Remove(tmpPath)
 		return 0, nil, errPartTooLarge
+	}
+
+	if err := dest.Sync(); err != nil {
+		os.Remove(tmpPath)
+		return 0, nil, errPartIO
+	}
+	dest.Close()
+
+	if err := os.Rename(tmpPath, destPath); err != nil {
+		os.Remove(tmpPath)
+		return 0, nil, errPartIO
 	}
 
 	return written, head[:headN], nil
@@ -367,34 +381,38 @@ func (h *UploadHandler) handleChunk(w http.ResponseWriter, r *http.Request, fiel
 	}
 
 	partPath := h.store.PartPath(session.UploadID, partIndex)
+	previous := int64(0)
+	if info, statErr := os.Stat(partPath); statErr == nil {
+		previous = info.Size()
+	}
+
 	written, _, err := writePart(part, partPath, h.maxChunkBytes)
 	if err != nil {
 		writeChunkError(w, err)
 		return
 	}
 
-	h.store.AddStaging(written)
+	h.store.AddStaging(written - previous)
 
 	stagedAfter := h.store.SessionStagedBytes(session.UploadID, session.TotalParts)
 	if stagedAfter > session.TotalSize {
 		os.Remove(partPath)
-		h.store.ReleaseStaging(written)
+		h.store.AddStaging(-written)
 		http.Error(w, "upload exceeds declared size", http.StatusBadRequest)
 		return
 	}
 
-	for i := 0; i < session.TotalParts; i++ {
-		if _, err := os.Stat(h.store.PartPath(session.UploadID, i)); err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"upload_id": session.UploadID,
-				"token":     session.Token,
-				"received":  partIndex + 1,
-				"total":     session.TotalParts,
-				"done":      false,
-			})
-			return
-		}
+	received := h.store.ReceivedParts(session.UploadID, session.TotalParts)
+	if len(received) < session.TotalParts {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"upload_id": session.UploadID,
+			"token":     session.Token,
+			"received":  received,
+			"total":     session.TotalParts,
+			"done":      false,
+		})
+		return
 	}
 
 	destPath := filepath.Join(h.store.GetUploadDir(), session.StoredName)
