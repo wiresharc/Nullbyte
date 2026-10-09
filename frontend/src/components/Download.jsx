@@ -433,23 +433,23 @@ function safeName(name, fallback) {
               </div>
             )}
 
-            <div className="flex gap-2">
-              <button
-                onClick={() => { previewHook.openSingle(); setPreviewOpen(true) }}
-                disabled={downloading}
-                className="px-5 py-4 rounded-xl bg-surface-700 hover:bg-surface-600
-                           border border-white/10 text-lg transition-colors disabled:opacity-50"
-              >
-                preview
-              </button>
-              <button
-                onClick={handleDownload}
-                disabled={downloading}
-                className="btn-primary flex-1 py-4 text-lg"
-              >
-                {downloading ? 'processing...' : bundle ? 'decrypt bundle' : 'download file'}
-              </button>
-            </div>
+            <button
+              onClick={handleDownload}
+              disabled={downloading}
+              className="btn-primary w-full py-4 text-lg"
+            >
+              {downloading ? 'processing...' : bundle ? 'decrypt bundle' : 'download file'}
+            </button>
+
+            <button
+              onClick={() => { previewHook.openSingle(); setPreviewOpen(true) }}
+              disabled={downloading}
+              className="mt-2 w-full py-2 rounded-xl bg-surface-700/40 hover:bg-surface-700
+                         border border-white/5 text-sm text-gray-400 transition-colors
+                         disabled:opacity-50"
+            >
+              preview
+            </button>
 
             {bundle && (
               <div className="mt-6">
@@ -471,22 +471,21 @@ function safeName(name, fallback) {
                 )}
                 <ul className="space-y-1">
                   {bundle.entries.map((entry, i) => (
-                    <li key={i} className="flex items-center gap-1">
-                      <button
-                        onClick={() => { previewHook.openEntry(entry, bundle.data); setPreviewOpen(true) }}
-                        aria-label={`preview ${entry.n}`}
-                        title="preview"
-                        className="px-2 py-2 rounded-lg bg-surface-700/40 border border-white/5
-                                   hover:bg-surface-700 text-sm transition-colors"
-                      >
-                        preview
-                      </button>
+                    <li key={i}>
                       <button
                         onClick={() => saveBundleEntry(entry)}
-                        className="flex-1 text-left px-3 py-2 rounded-lg bg-surface-700/40 border border-white/5 hover:bg-surface-700 text-sm transition-colors"
+                        className="w-full text-left px-3 py-2 rounded-lg bg-surface-700/40 border border-white/5 hover:bg-surface-700 text-sm transition-colors"
                       >
                         <span className="block truncate">{entry.n}</span>
                         <span className="text-xs text-gray-500">{formatSize(entry.s)}</span>
+                      </button>
+                      <button
+                        onClick={() => { previewHook.openEntry(entry, bundle.data); setPreviewOpen(true) }}
+                        aria-label={`preview ${entry.n}`}
+                        className="mt-1 w-full py-1 rounded-lg bg-surface-700/20 border border-white/5
+                                   hover:bg-surface-700/60 text-xs text-gray-500 transition-colors"
+                      >
+                        preview
                       </button>
                     </li>
                   ))}
