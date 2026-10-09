@@ -37,6 +37,11 @@ func (h *DownloadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// a preview is a read, not a download: it must never consume the single
+	// allowed download or burn the file, otherwise merely looking at a link
+	// destroys it
+	isPreview := r.URL.Query().Get("preview") == "1"
+
 	// check expiry and download limit
 	if meta.IsExpired() {
 		h.store.Delete(token)
@@ -56,17 +61,23 @@ func (h *DownloadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	meta.Downloads++
-	exhausted := meta.Downloads >= meta.MaxDownloads
-	if !exhausted {
-		h.store.Save(token, *meta)
+	exhausted := false
+	if !isPreview {
+		meta.Downloads++
+		exhausted = meta.Downloads >= meta.MaxDownloads
+		if !exhausted {
+			h.store.Save(token, *meta)
+		}
 	}
 
-	w.Header().Set("Content-Type", "application/octet-stream")
+	disposition := "attachment"
+	if isPreview {
+		disposition = "inline"
+	}
 	if name := storage.SanitizeFilename(meta.OriginalName); name != "" {
-		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
+		w.Header().Set("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": name}))
 	} else {
-		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": "file.bin"}))
+		w.Header().Set("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": "file.bin"}))
 	}
 	http.ServeFile(w, r, filePath)
 

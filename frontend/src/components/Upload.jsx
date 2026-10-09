@@ -1,3 +1,4 @@
+import ExpirySelector, { DEFAULT_EXPIRY_SECONDS } from './ExpirySelector'
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { generateKeyMaterial, exportKey, importKey } from '../crypto/encryption'
 import { encodeBundle } from '../crypto/bundle'
@@ -17,6 +18,7 @@ export default function Upload() {
   const [uploadStats, setUploadStats] = useState(null)
   const [useEncryption, setUseEncryption] = useState(true)
   const [downloadMode, setDownloadMode] = useState('single')
+  const [expirySeconds, setExpirySeconds] = useState(DEFAULT_EXPIRY_SECONDS)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
   const [dragOver, setDragOver] = useState(false)
@@ -212,6 +214,7 @@ export default function Upload() {
         resume,
         captchaToken,
         honeypot: honeypotRef.current?.value || '',
+        expiresIn: expirySeconds,
         filename: useEncryption ? 'encrypted.bin' : displayName,
         signal: abortRef.current?.signal,
         onProgress: (stats) => setUploadStats(stats),
@@ -514,6 +517,10 @@ export default function Upload() {
                 </select>
               </div>
             </div>
+
+            <div className="mt-3">
+              <ExpirySelector seconds={expirySeconds} onChange={setExpirySeconds} />
+            </div>
           </div>
         )}
 
@@ -603,7 +610,11 @@ export default function Upload() {
               </div>
               <div>
                 <p className="font-medium">file uploaded successfully!</p>
-                <p className="text-sm text-gray-500">expires in 24 hours</p>
+                <p className="text-sm text-gray-500">
+                  expires {expirySeconds >= DEFAULT_EXPIRY_SECONDS
+                    ? 'in 24 hours (24 hours by default)'
+                    : `in ${Math.floor(expirySeconds / 3600)}h ${Math.floor((expirySeconds % 3600) / 60)}m`}
+                </p>
               </div>
             </div>
 

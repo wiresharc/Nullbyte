@@ -187,7 +187,7 @@ async function produceFirstPart(opts, store, planData) {
 
 export async function uploadBlob(blob, opts) {
   const {
-    apiUrl, downloads, encrypted, compress, captchaToken, honeypot,
+    apiUrl, downloads, encrypted, compress, captchaToken, honeypot, expiresIn,
     filename, onProgress, signal, resume,
   } = opts
 
@@ -291,6 +291,7 @@ export async function uploadBlob(blob, opts) {
     formData.append('encrypted', encrypted ? 'true' : 'false')
     formData.append('captcha_token', captchaToken || '')
     formData.append('website', honeypot || '')
+    formData.append('expires_in', String(expiresIn || 0))
     formData.append('file', new Blob([only.bytes], { type: 'application/octet-stream' }), filename)
 
     const res = await sendWithRetry(url, () => formData, null, signal)
@@ -312,6 +313,7 @@ export async function uploadBlob(blob, opts) {
       formData.append('encrypted', encrypted ? 'true' : 'false')
       formData.append('captcha_token', captchaToken || '')
       formData.append('website', honeypot || '')
+      formData.append('expires_in', String(expiresIn || 0))
     }
     formData.append(
       'file',

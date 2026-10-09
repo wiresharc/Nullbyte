@@ -1,9 +1,13 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import useTransferStats from './useTransferStats'
 import { useParams } from 'react-router-dom'
 import { importKey, decryptFile, downloadBlob, concatChunks, readHeader, ENC_CHUNK, ciphertextSize } from '../crypto/encryption'
 import { sniff, openEncryptedStream, pullUntil, TAU, concat } from '../crypto/streaming'
 import { decodeBundleHeader } from '../crypto/bundle'
 import { decompressBlob } from '../crypto/compress'
+import { formatBytes, formatCountdown, formatSpeed, formatEta } from '../lib/format'
+import usePreview from './usePreview'
+import PreviewPanel from './PreviewPanel'
 
 const INLINE_LIMIT = 64 * 1024 * 1024
 
@@ -16,10 +20,22 @@ export default function Download() {
   const [decryptProgress, setDecryptProgress] = useState(0)
   const [bundle, setBundle] = useState(null)
   const [downloadedName, setDownloadedName] = useState(null)
+  const [stats, setStats] = useState(null)
+  const [expiresIn, setExpiresIn] = useState(null)
+  const transfer = useTransferStats()
+  const [previewOpen, setPreviewOpen] = useState(false)
 
   const hash = window.location.hash
   const keyMatch = hash.match(/#key=([^&]+)/)
   const encryptionKey = keyMatch ? keyMatch[1] : null
+
+  const previewHook = usePreview({
+    token,
+    apiUrl: import.meta.env.CB_API_URL || '',
+    encryptionKey,
+    fallbackName: fileInfo?.original_name,
+    fallbackMime: fileInfo?.file_type,
+  })
 
 function safeName(name, fallback) {
   if (!name) return fallback
@@ -49,10 +65,22 @@ function safeName(name, fallback) {
     }
   }
 
+  useEffect(() => {
+    if (!fileInfo?.expires_at) return
+    const update = () => {
+      const ms = new Date(fileInfo.expires_at).getTime() - Date.now()
+      setExpiresIn(ms > 0 ? ms : 0)
+    }
+    update()
+    const id = setInterval(update, 1000)
+    return () => clearInterval(id)
+  }, [fileInfo?.expires_at])
+
   const handleDownload = async () => {
     setDownloading(true)
     setProgress(0)
     setDecryptProgress(0)
+    setStats(null)
     setError(null)
     setBundle(null)
     setDownloadedName(null)
@@ -72,15 +100,24 @@ function safeName(name, fallback) {
         if (canStream && isLarge) {
           const handle = await window.showSaveFilePicker({ suggestedName: name })
           const writable = await handle.createWritable()
+          transfer.reset(contentLength)
           const reader = response.body.getReader()
           while (true) {
             const { done, value } = await reader.read()
             if (done) break
             await writable.write(value)
+            const snap = transfer.tick(value.length, contentLength)
+            if (snap) {
+              setStats(snap)
+              if (contentLength) setProgress(Math.min(100, Math.round((snap.received / contentLength) * 100)))
+            }
           }
           await writable.close()
         } else {
-          downloadBlob([new Uint8Array(await response.arrayBuffer())], name, mime)
+          transfer.reset(contentLength)
+          const buf = new Uint8Array(await response.arrayBuffer())
+          setStats(transfer.tick(buf.length, buf.length))
+          downloadBlob([buf], name, mime)
         }
 
         setProgress(100)
@@ -92,6 +129,8 @@ function safeName(name, fallback) {
       const probe = await sniff(response, cryptoKey, baseNonce)
 
       if (!probe.header) throw new Error('file header is malformed')
+
+      transfer.reset(contentLength)
 
       // a compressed bundle hides its manifest behind the gzip layer, so it can only be
       // identified after decompressing, which forces it down the buffered path
@@ -113,6 +152,8 @@ function safeName(name, fallback) {
           if (contentLength) {
             setDecryptProgress(Math.min(100, Math.round((decryptedBytes / contentLength) * 100)))
           }
+          const snap = transfer.tick(part.bytes.length, contentLength)
+          if (snap) setStats(snap)
         }
 
         let plain = concat(parts)
@@ -165,7 +206,14 @@ function safeName(name, fallback) {
           probe.reader, probe.prefix, cryptoKey, baseNonce,
           () => {}, probe.firstPlain
         )
-        for await (const part of stream.read()) await writer.write(part.bytes)
+        for await (const part of stream.read()) {
+          await writer.write(part.bytes)
+          const snap = transfer.tick(part.bytes.length, contentLength)
+          if (snap) {
+            setStats(snap)
+            if (contentLength) setProgress(Math.min(100, Math.round((snap.received / contentLength) * 100)))
+          }
+        }
         await writer.close()
         await drain
         await writable.close()
@@ -174,7 +222,14 @@ function safeName(name, fallback) {
           probe.reader, probe.prefix, cryptoKey, baseNonce,
           () => {}, probe.firstPlain
         )
-        for await (const part of stream.read()) await writable.write(part.bytes)
+        for await (const part of stream.read()) {
+          await writable.write(part.bytes)
+          const snap = transfer.tick(part.bytes.length, contentLength)
+          if (snap) {
+            setStats(snap)
+            if (contentLength) setProgress(Math.min(100, Math.round((snap.received / contentLength) * 100)))
+          }
+        }
         await writable.close()
       }
 
@@ -284,7 +339,12 @@ function safeName(name, fallback) {
       <div className="max-w-lg w-full">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold mb-2">ready to download</h1>
-          <p className="text-gray-400">this file will be available for 24 hours after upload</p>
+          <p className="text-gray-400">
+            {expiresIn !== null && (
+              <>available for {formatCountdown(expiresIn)} &middot; </>
+            )}
+            {fileInfo?.downloads}/{fileInfo?.max_downloads} downloads used
+          </p>
         </div>
 
         <div className="border border-red-500/20 rounded-2xl p-1 mb-6">
@@ -308,9 +368,9 @@ function safeName(name, fallback) {
                 <p className="text-sm font-medium truncate">{fileInfo.file_type || 'unknown'}</p>
               </div>
               <div className="p-3 rounded-xl bg-surface-700/30 border border-white/5">
-                <p className="text-xs text-gray-500 mb-1">expires</p>
+                <p className="text-xs text-gray-500 mb-1">expires in</p>
                 <p className="text-sm font-medium">
-                  {new Date(fileInfo.expires_at).toLocaleString()}
+                  {expiresIn === null ? '--' : formatCountdown(expiresIn)}
                 </p>
               </div>
               <div className="p-3 rounded-xl bg-surface-700/30 border border-white/5">
@@ -327,7 +387,22 @@ function safeName(name, fallback) {
               </div>
             </div>
 
-            {downloading && (
+            {downloading && stats && stats.total > 0 && (
+        <div className="glass p-4 mb-4">
+          <div className="flex flex-wrap justify-between gap-x-6 gap-y-1 text-xs text-gray-400 tabular-nums">
+            <span>
+              {formatBytes(stats.received)} of {formatBytes(stats.total)}
+            </span>
+            <span>{formatSpeed(stats.rate)}</span>
+            <span>{formatEta(stats.etaMs)} left</span>
+            <span className="text-gray-500">
+              {formatEta(stats.elapsedMs)} elapsed
+            </span>
+          </div>
+        </div>
+      )}
+
+      {downloading && (
               <div className="mb-6 space-y-3">
                 <div>
                   <div className="flex justify-between text-sm mb-1">
@@ -352,13 +427,29 @@ function safeName(name, fallback) {
               </div>
             )}
 
-            <button
-              onClick={handleDownload}
-              disabled={downloading}
-              className="btn-primary w-full py-4 text-lg"
-            >
-              {downloading ? 'processing...' : bundle ? 'decrypt bundle' : 'download file'}
-            </button>
+            {previewOpen && (
+              <div className="mb-6">
+                <PreviewPanel hook={previewHook} onClose={() => setPreviewOpen(false)} />
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => { previewHook.openSingle(); setPreviewOpen(true) }}
+                disabled={downloading}
+                className="px-5 py-4 rounded-xl bg-surface-700 hover:bg-surface-600
+                           border border-white/10 text-lg transition-colors disabled:opacity-50"
+              >
+                preview
+              </button>
+              <button
+                onClick={handleDownload}
+                disabled={downloading}
+                className="btn-primary flex-1 py-4 text-lg"
+              >
+                {downloading ? 'processing...' : bundle ? 'decrypt bundle' : 'download file'}
+              </button>
+            </div>
 
             {bundle && (
               <div className="mt-6">
@@ -380,10 +471,19 @@ function safeName(name, fallback) {
                 )}
                 <ul className="space-y-1">
                   {bundle.entries.map((entry, i) => (
-                    <li key={i}>
+                    <li key={i} className="flex items-center gap-1">
+                      <button
+                        onClick={() => { previewHook.openEntry(entry, bundle.data); setPreviewOpen(true) }}
+                        aria-label={`preview ${entry.n}`}
+                        title="preview"
+                        className="px-2 py-2 rounded-lg bg-surface-700/40 border border-white/5
+                                   hover:bg-surface-700 text-sm transition-colors"
+                      >
+                        preview
+                      </button>
                       <button
                         onClick={() => saveBundleEntry(entry)}
-                        className="w-full text-left px-3 py-2 rounded-lg bg-surface-700/40 border border-white/5 hover:bg-surface-700 text-sm transition-colors"
+                        className="flex-1 text-left px-3 py-2 rounded-lg bg-surface-700/40 border border-white/5 hover:bg-surface-700 text-sm transition-colors"
                       >
                         <span className="block truncate">{entry.n}</span>
                         <span className="text-xs text-gray-500">{formatSize(entry.s)}</span>
@@ -402,6 +502,7 @@ function safeName(name, fallback) {
           </div>
         </div>
       </div>
+
     </div>
   )
 }

@@ -25,6 +25,7 @@ type UploadSession struct {
 	Filename     string    `json:"filename"`
 	Encrypted    bool      `json:"encrypted"`
 	MaxDownloads int       `json:"max_downloads"`
+	ExpiresIn    int64     `json:"expires_in"`
 	IP           string    `json:"ip"`
 	CreatedAt    time.Time `json:"created_at"`
 }

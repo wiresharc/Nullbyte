@@ -195,6 +195,43 @@ func writeChunkError(w http.ResponseWriter, err error) {
 	http.Error(w, "upload failed", http.StatusInternalServerError)
 }
 
+const (
+	defaultExpiry = 24 * time.Hour
+	minExpiry     = time.Minute
+	maxExpiry     = 24 * time.Hour
+)
+
+// the client only ever gets to ask; the server decides
+func expiryFrom(fields map[string]string) time.Duration {
+	secs, err := strconv.ParseInt(fields["expires_in"], 10, 64)
+	if err != nil || secs <= 0 {
+		return defaultExpiry
+	}
+	d := time.Duration(secs) * time.Second
+	if d < minExpiry {
+		return minExpiry
+	}
+	if d > maxExpiry {
+		return maxExpiry
+	}
+	return d
+}
+
+// sessions written before custom expiry existed carry no value, so they keep 24h
+func sessionExpiry(session models.UploadSession) time.Duration {
+	if session.ExpiresIn <= 0 {
+		return defaultExpiry
+	}
+	d := time.Duration(session.ExpiresIn) * time.Second
+	if d < minExpiry {
+		return minExpiry
+	}
+	if d > maxExpiry {
+		return maxExpiry
+	}
+	return d
+}
+
 func maxDownloadsFrom(fields map[string]string) int {
 	if fields["downloads"] == "multi" {
 		return 10
@@ -262,7 +299,7 @@ func (h *UploadHandler) handleSingle(w http.ResponseWriter, r *http.Request, fie
 		OriginalHash: storage.HashFilename(filename),
 		Size:         written,
 		FileType:     fileType,
-		ExpiresAt:    time.Now().Add(24 * time.Hour),
+		ExpiresAt:    time.Now().Add(expiryFrom(fields)),
 		MaxDownloads: maxDownloadsFrom(fields),
 		Encrypted:    encrypted,
 		CreatedAt:    time.Now(),
@@ -346,6 +383,7 @@ func (h *UploadHandler) handleChunk(w http.ResponseWriter, r *http.Request, fiel
 			Filename:     sourceName,
 			Encrypted:    fields["encrypted"] == "true",
 			MaxDownloads: maxDownloadsFrom(fields),
+			ExpiresIn:    int64(expiryFrom(fields) / time.Second),
 			IP:           ip,
 			CreatedAt:    time.Now(),
 		}
@@ -459,7 +497,7 @@ func (h *UploadHandler) handleChunk(w http.ResponseWriter, r *http.Request, fiel
 		OriginalHash: storage.HashFilename(session.Filename),
 		Size:         assembled,
 		FileType:     fileType,
-		ExpiresAt:    time.Now().Add(24 * time.Hour),
+		ExpiresAt:    time.Now().Add(sessionExpiry(session)),
 		MaxDownloads: session.MaxDownloads,
 		Encrypted:    session.Encrypted,
 		CreatedAt:    time.Now(),
