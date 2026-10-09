@@ -19,7 +19,15 @@ export default function Upload() {
   const [useEncryption, setUseEncryption] = useState(true)
   const [downloadMode, setDownloadMode] = useState('single')
   const [expirySeconds, setExpirySeconds] = useState(DEFAULT_EXPIRY_SECONDS)
+
   const [result, setResult] = useState(null)
+
+  const expiresLabel = (() => {
+    const parsed = result?.expires ? new Date(result.expires) : null
+    const when = parsed && !isNaN(parsed.getTime()) ? parsed : new Date(Date.now() + expirySeconds * 1000)
+    return when.toLocaleString()
+  })()
+
   const [error, setError] = useState(null)
   const [dragOver, setDragOver] = useState(false)
   const [captchaVerified, setCaptchaVerified] = useState(false)
@@ -76,7 +84,7 @@ export default function Upload() {
       setPrepared({ blob: null, raw, final: raw, spilled: false })
       setPreparing(false)
       if (raw > MAX_FILE_SIZE) {
-        setError(`file is ${formatSize(raw)} which exceeds the ${formatLimit(MAX_FILE_SIZE)} limit`)
+        setError(`file is ${formatBytes(raw)} which exceeds the ${formatLimit(MAX_FILE_SIZE)} limit`)
       } else {
         setError(null)
       }
@@ -92,7 +100,7 @@ export default function Upload() {
         setPrepared(result)
         setPreparing(false)
         if (result.final > MAX_FILE_SIZE) {
-          setError(`${formatSize(result.final)} after compression still exceeds the ${formatLimit(MAX_FILE_SIZE)} limit`)
+          setError(`${formatBytes(result.final)} after compression still exceeds the ${formatLimit(MAX_FILE_SIZE)} limit`)
         } else {
           setError(null)
         }
@@ -163,8 +171,8 @@ export default function Upload() {
       if (prepared && prepared.final > MAX_FILE_SIZE) {
         setError(
           prepared.raw > MAX_FILE_SIZE
-            ? `file is ${formatSize(prepared.raw)} which exceeds the ${formatLimit(MAX_FILE_SIZE)} limit`
-            : `${formatSize(prepared.final)} after compression still exceeds the ${formatLimit(MAX_FILE_SIZE)} limit`
+            ? `file is ${formatBytes(prepared.raw)} which exceeds the ${formatLimit(MAX_FILE_SIZE)} limit`
+            : `${formatBytes(prepared.final)} after compression still exceeds the ${formatLimit(MAX_FILE_SIZE)} limit`
         )
         setUploading(false)
         return
@@ -236,7 +244,7 @@ export default function Upload() {
         token: response.token,
         key: keyFragment,
         size: response.size,
-        fileType: response.file_type,
+        fileType: response.fileType,
         expires: response.expires,
       })
 
@@ -257,13 +265,6 @@ export default function Upload() {
 
   const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text)
-  }
-
-  const formatSize = (bytes) => {
-    if (!bytes < 1024) return bytes + ' b'
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' kb'
-    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' mb'
-    return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' gb'
   }
 
   return (
@@ -317,7 +318,7 @@ export default function Upload() {
               ) : (
                 <>
                   <p className="font-medium mb-1 truncate">{file.name}</p>
-                  <p className="text-sm text-gray-500">{formatSize(file.size)}</p>
+                  <p className="text-sm text-gray-500">{formatBytes(file.size)}</p>
                   <button
                     onClick={(e) => { e.stopPropagation(); setFile(null) }}
                     className="mt-4 text-sm text-red-400 hover:text-red-300 transition-colors"
@@ -360,7 +361,7 @@ export default function Upload() {
                   <p className="font-medium mb-1">
                     {bundleFiles.length} item{bundleFiles.length === 1 ? '' : 's'}
                   </p>
-                  <p className="text-sm text-gray-500">{formatSize(totalSize(bundleFiles))}</p>
+                  <p className="text-sm text-gray-500">{formatBytes(totalSize(bundleFiles))}</p>
                 </>
               )}
 
@@ -402,7 +403,7 @@ export default function Upload() {
                         className="flex items-center gap-2 text-xs text-gray-500 group"
                       >
                         <span className="flex-1 truncate">{f.webkitRelativePath || f.name}</span>
-                        <span className="text-gray-600 shrink-0">{formatSize(f.size)}</span>
+                        <span className="text-gray-600 shrink-0">{formatBytes(f.size)}</span>
                         <button
                           onClick={() => removeBundleFile(i)}
                           aria-label={`remove ${f.webkitRelativePath || f.name}`}
@@ -465,7 +466,7 @@ export default function Upload() {
                   {preparing
                     ? 'compressing to measure size...'
                     : prepared && useCompression && useEncryption && prepared.final !== prepared.raw
-                      ? `${formatSize(prepared.raw)} compresses to ${formatSize(prepared.final)}`
+                      ? `${formatBytes(prepared.raw)} compresses to ${formatBytes(prepared.final)}`
                       : 'best for code, text, executables'}
                 </p>
               </div>
@@ -545,9 +546,9 @@ export default function Upload() {
           <div className="text-center mb-8">
             {rawSize > 0 && (
               <p className="text-xs text-gray-500 mb-3">
-                {formatSize(rawSize)} selected, limit {formatLimit(MAX_FILE_SIZE)}
+                {formatBytes(rawSize)} selected, limit {formatLimit(MAX_FILE_SIZE)}
                 {prepared && useCompression && useEncryption && prepared.final !== rawSize && (
-                  <> &middot; {formatSize(prepared.final)} after compression</>
+                  <> &middot; {formatBytes(prepared.final)} after compression</>
                 )}
               </p>
             )}
@@ -668,15 +669,15 @@ export default function Upload() {
             <div className="grid grid-cols-3 gap-4 text-center">
               <div>
                 <p className="text-xs text-gray-500">size</p>
-                <p className="text-sm font-medium">{formatSize(result.size)}</p>
+                <p className="text-sm font-medium">{formatBytes(result.size)}</p>
               </div>
               <div>
                 <p className="text-xs text-gray-500">type</p>
-                <p className="text-sm font-medium truncate">{result.fileType}</p>
+                <p className="text-sm font-medium truncate">{result.fileType || '--'}</p>
               </div>
               <div>
                 <p className="text-xs text-gray-500">expires</p>
-                <p className="text-sm font-medium">{new Date(result.expires).toLocaleString()}</p>
+                <p className="text-sm font-medium">{expiresLabel}</p>
               </div>
             </div>
           </div>

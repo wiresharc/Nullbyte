@@ -296,7 +296,14 @@ export async function uploadBlob(blob, opts) {
 
     const res = await sendWithRetry(url, () => formData, null, signal)
     clearPendingUpload()
-    return { token: res.token, size: planData.totalSize, done: true, compression }
+    return {
+      token: res.token,
+      size: planData.totalSize,
+      expires: res.expires,
+      fileType: res.file_type,
+      done: true,
+      compression,
+    }
   }
 
   for await (const part of produceParts(opts, source, planData, skipTo)) {
@@ -342,11 +349,18 @@ export async function uploadBlob(blob, opts) {
 
     if (res.done) {
       clearPendingUpload()
-      return { token: res.token, size: planData.totalSize, done: true, compression }
+      return {
+        token: res.token,
+        size: planData.totalSize,
+        expires: res.expires,
+        fileType: res.file_type,
+        done: true,
+        compression,
+      }
     }
   }
 
   clearPendingUpload()
   if (!token) throw new Error('upload did not complete')
-  return { token, size: planData.totalSize, done: true, compression }
+  return { token, size: planData.totalSize, expires: null, fileType: null, done: true, compression }
 }
