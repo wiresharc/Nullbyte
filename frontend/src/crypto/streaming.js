@@ -28,6 +28,9 @@ function readHeaderFrom(bytes) {
       name: meta.n || '',
       type: meta.t || '',
       compressed: meta.c === 1,
+      // headers written before compression applied to plain uploads carry no 'e',
+      // and every one of those was encrypted
+      encrypted: meta.e === undefined ? true : meta.e === 1,
       consumed: 8 + length,
     }
   } catch {

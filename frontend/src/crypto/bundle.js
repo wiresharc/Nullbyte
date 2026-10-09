@@ -43,4 +43,14 @@ function decodeBundleHeader(bytes) {
   }
 }
 
+// cheap check on the opening bytes so a download knows whether it must buffer
+export function hasBundleMagic(bytes) {
+  if (!bytes || bytes.length < MANIFEST_MAGIC.length) return false
+  const magic = new TextEncoder().encode(MANIFEST_MAGIC)
+  for (let i = 0; i < magic.length; i++) {
+    if (bytes[i] !== magic[i]) return false
+  }
+  return true
+}
+
 export { encodeBundle, decodeBundleHeader }

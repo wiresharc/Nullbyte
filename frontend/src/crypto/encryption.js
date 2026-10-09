@@ -72,9 +72,9 @@ function chunkAAD(chunkIndex) {
   return aad;
 }
 
-export function buildHeader(name, type, compressed) {
+export function buildHeader(name, type, compressed, encrypted = true) {
   const meta = new TextEncoder().encode(
-    JSON.stringify({ n: name || '', t: type || '', c: compressed ? 1 : 0 })
+    JSON.stringify({ n: name || '', t: type || '', c: compressed ? 1 : 0, e: encrypted ? 1 : 0 })
   );
   const out = new Uint8Array(8 + meta.length);
   const view = new DataView(out.buffer);

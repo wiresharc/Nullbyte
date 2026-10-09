@@ -1,4 +1,5 @@
 import ExpirySelector, { DEFAULT_EXPIRY_SECONDS } from './ExpirySelector'
+import EncryptionPolicyModal from './EncryptionPolicyModal'
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { generateKeyMaterial, exportKey, importKey } from '../crypto/encryption'
 import { encodeBundle } from '../crypto/bundle'
@@ -17,6 +18,7 @@ export default function Upload() {
   const [uploading, setUploading] = useState(false)
   const [uploadStats, setUploadStats] = useState(null)
   const [useEncryption, setUseEncryption] = useState(true)
+  const [showPolicy, setShowPolicy] = useState(false)
   const [downloadMode, setDownloadMode] = useState('single')
   const [expirySeconds, setExpirySeconds] = useState(DEFAULT_EXPIRY_SECONDS)
 
@@ -50,7 +52,7 @@ export default function Upload() {
   }, [])
 
   const activeFiles = bundleFiles.length > 0 ? bundleFiles : file ? [file] : []
-  const compressing = useEncryption && useCompression
+  const compressing = useCompression
   const effectiveSize = compressing && prepared ? prepared.final : rawSize
   const overLimit = effectiveSize > MAX_FILE_SIZE
 
@@ -80,7 +82,7 @@ export default function Upload() {
 
     setRawSize(raw)
 
-    if (!useEncryption || !useCompression) {
+    if (!useCompression) {
       setPrepared({ blob: null, raw, final: raw, spilled: false })
       setPreparing(false)
       if (raw > MAX_FILE_SIZE) {
@@ -94,7 +96,7 @@ export default function Upload() {
     setPreparing(true)
     setPrepared(null)
 
-    preparePayload(built.blob, { encrypted: true, compress: true })
+    preparePayload(built.blob, { encrypted: useEncryption, compress: true })
       .then((result) => {
         if (cancelled) return
         setPrepared(result)
@@ -216,7 +218,7 @@ export default function Upload() {
         keyB64,
         name: displayName,
         type: bundleEntries ? 'application/octet-stream' : (chosen[0].type || 'application/octet-stream'),
-        compress: useEncryption && useCompression,
+        compress: useCompression,
         precompressed: resume ? null : prepared?.blob,
         spilled: prepared?.spilled,
         resume,
@@ -461,11 +463,11 @@ export default function Upload() {
 
             <div className="flex items-center justify-between p-4 rounded-xl bg-surface-700/30 border border-white/5 mb-4">
               <div>
-                <p className="font-medium text-sm">compress before encrypting</p>
+                <p className="font-medium text-sm">compress</p>
                 <p className="text-xs text-gray-500 mt-0.5">
                   {preparing
                     ? 'compressing to measure size...'
-                    : prepared && useCompression && useEncryption && prepared.final !== prepared.raw
+                    : prepared && useCompression && prepared.final !== prepared.raw
                       ? `${formatBytes(prepared.raw)} compresses to ${formatBytes(prepared.final)}`
                       : 'best for code, text, executables'}
                 </p>
@@ -486,19 +488,29 @@ export default function Upload() {
             <div className="grid sm:grid-cols-2 gap-4">
               <div className="flex items-center justify-between p-4 rounded-xl bg-surface-700/30 border border-white/5">
                 <div>
-                  <p className="font-medium text-sm">end to end encryption</p>
+                  <p className="font-medium text-sm flex items-center gap-1.5">
+                    <svg className="w-3.5 h-3.5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round"
+                            d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75M6 10.5h12v9.75H6z" />
+                    </svg>
+                    end to end encryption
+                  </p>
                   <p className="text-xs text-gray-500 mt-0.5">key never leaves your browser</p>
                 </div>
-                <button
-                  onClick={() => setUseEncryption(!useEncryption)}
-                  className={`relative w-11 h-6 rounded-full transition-colors duration-300 ${
-                    useEncryption ? 'bg-red-500' : 'bg-surface-600'
-                  }`}
-                >
-                  <div className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-300 ${
-                    useEncryption ? 'translate-x-5' : 'translate-x-0'
-                  }`} />
-                </button>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] uppercase tracking-wider text-gray-500">
+                    always on
+                  </span>
+                  <button
+                    onClick={() => setShowPolicy(true)}
+                    aria-label="why encryption cannot be turned off"
+                    className="relative w-11 h-6 rounded-full bg-red-500/70 cursor-pointer
+                               transition-colors duration-300"
+                  >
+                    <div className="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white
+                                    shadow transition-transform duration-300 translate-x-5" />
+                  </button>
+                </div>
               </div>
 
               <div className="flex items-center justify-between p-4 rounded-xl bg-surface-700/30 border border-white/5">
@@ -547,7 +559,7 @@ export default function Upload() {
             {rawSize > 0 && (
               <p className="text-xs text-gray-500 mb-3">
                 {formatBytes(rawSize)} selected, limit {formatLimit(MAX_FILE_SIZE)}
-                {prepared && useCompression && useEncryption && prepared.final !== rawSize && (
+                {prepared && useCompression && prepared.final !== rawSize && (
                   <> &middot; {formatBytes(prepared.final)} after compression</>
                 )}
               </p>
@@ -682,6 +694,8 @@ export default function Upload() {
             </div>
           </div>
         )}
+
+        {showPolicy && <EncryptionPolicyModal onClose={() => setShowPolicy(false)} />}
 
         <DownloadLookup />
 

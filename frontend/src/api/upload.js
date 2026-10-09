@@ -71,7 +71,7 @@ async function sendWithRetry(url, build, onProgress, signal) {
 
 export async function preparePayload(blob, opts, onProgress) {
   const raw = blob.size
-  if (!opts.encrypted || !opts.compress) {
+  if (!opts.compress) {
     return { blob, raw, final: raw, spilled: false }
   }
   const result = await compressToStore(blob, onProgress)
@@ -111,14 +111,29 @@ function plan(opts, store) {
   const { encrypted, compress, name, type } = opts
 
   if (!encrypted) {
-    const totalSize = store.size
+    // an unencrypted upload only needs a header when it was compressed, otherwise
+    // there would be no way to tell the recipient to inflate it
+    if (!compress) {
+      const totalSize = store.size
+      return {
+        encrypted: false,
+        totalSize,
+        plainTotal: totalSize,
+        totalParts: Math.max(1, Math.ceil(totalSize / PART_SIZE)),
+        chunkCount: 0,
+        header: null,
+        payload: store,
+      }
+    }
+    const header = buildHeader(name, type, true, false)
+    const totalSize = header.length + store.size
     return {
       encrypted: false,
       totalSize,
       plainTotal: totalSize,
       totalParts: Math.max(1, Math.ceil(totalSize / PART_SIZE)),
       chunkCount: 0,
-      header: null,
+      header,
       payload: store,
     }
   }
@@ -159,9 +174,11 @@ async function* produceParts(opts, blob, planData, startPart) {
   const { encrypted, compress, cryptoKey, baseNonce } = opts
 
   if (!encrypted) {
+    // totalSize already accounts for the header when one is present
+    const source = planData.header ? new Blob([planData.header, blob]) : blob
     for (let i = startPart; i < planData.totalParts; i++) {
       const start = i * PART_SIZE
-      const slice = blob.slice(start, Math.min(start + PART_SIZE, planData.totalSize))
+      const slice = source.slice(start, Math.min(start + PART_SIZE, planData.totalSize))
       const bytes = new Uint8Array(await slice.arrayBuffer())
       yield { index: i, bytes }
     }
@@ -196,7 +213,7 @@ export async function uploadBlob(blob, opts) {
     ? { from: blob.size, to: source.size, spilled: opts.spilled === true }
     : null
 
-  if (opts.encrypted && opts.compress && !opts.precompressed) {
+  if (opts.compress && !opts.precompressed) {
     const result = await compressToStore(blob, (sent) => {
       onProgress?.({
         phase: 'compressing',

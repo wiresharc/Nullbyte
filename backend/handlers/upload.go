@@ -127,6 +127,13 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 	defer part.Close()
 
+	// storing plaintext would break the zero server knowledge guarantee, so it is
+	// refused here rather than merely avoided by the official client
+	if fields["encrypted"] != "true" {
+		http.Error(w, "encryption is required", http.StatusBadRequest)
+		return
+	}
+
 	if _, ok := fields["part_index"]; ok {
 		h.handleChunk(w, r, fields, part, filename)
 		return

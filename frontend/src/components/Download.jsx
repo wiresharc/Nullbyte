@@ -2,8 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import useTransferStats from './useTransferStats'
 import { useParams } from 'react-router-dom'
 import { importKey, decryptFile, downloadBlob, concatChunks, readHeader, ENC_CHUNK, ciphertextSize } from '../crypto/encryption'
-import { sniff, openEncryptedStream, pullUntil, TAU, concat } from '../crypto/streaming'
-import { decodeBundleHeader } from '../crypto/bundle'
+import { sniff, openEncryptedStream, pullUntil, TAU, concat, readHeaderFrom } from '../crypto/streaming'
+import { decodeBundleHeader, hasBundleMagic } from '../crypto/bundle'
 import { decompressBlob } from '../crypto/compress'
 import { formatBytes, formatCountdown, formatSpeed, formatEta } from '../lib/format'
 import usePreview from './usePreview'
@@ -97,11 +97,85 @@ function safeName(name, fallback) {
         const name = fileInfo?.original_name || 'downloaded_file'
         const mime = fileInfo?.file_type || 'application/octet-stream'
 
+        // peek the opening bytes: an unencrypted upload still carries a header when
+        // it was compressed, and a bundle carries its manifest right at the front
+        const reader = response.body.getReader()
+        const firstRead = await reader.read()
+        const prefix = firstRead.value ? new Uint8Array(firstRead.value) : new Uint8Array(0)
+        const plainHeader = readHeaderFrom(prefix)
+
+        const readAll = async () => {
+          const chunks = [prefix]
+          let total = prefix.length
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            chunks.push(value)
+            total += value.length
+          }
+          const out = new Uint8Array(total)
+          let off = 0
+          for (const c of chunks) { out.set(c, off); off += c.length }
+          return out
+        }
+
+        if (plainHeader) {
+          const raw = await readAll()
+          let plain = raw.subarray(plainHeader.consumed)
+          if (plainHeader.compressed) {
+            transfer.reset(raw.length)
+            plain = new Uint8Array(await (await decompressBlob(new Blob([plain]))).arrayBuffer())
+          }
+          const finalName = plainHeader.name || name
+          const detected = decodeBundleHeader(plain)
+          if (detected) {
+            setBundle({ entries: detected.entries, data: plain.subarray(detected.consumed) })
+            setDownloadedName(finalName)
+            setStats(transfer.tick(plain.length, plain.length))
+            setProgress(100)
+            setDecryptProgress(100)
+            return
+          }
+          setStats(transfer.tick(plain.length, plain.length))
+          downloadBlob([plain], finalName, plainHeader.type || mime)
+          setProgress(100)
+          setDecryptProgress(100)
+          setDownloadedName(finalName)
+          return
+        }
+
+        // a bundle has to be buffered whole: entry offsets only resolve once
+        // every file is present
+        if (hasBundleMagic(prefix)) {
+          const raw = await readAll()
+          const detected = decodeBundleHeader(raw)
+          if (detected) {
+            transfer.reset(raw.length)
+            setBundle({ entries: detected.entries, data: raw.subarray(detected.consumed) })
+            setStats(transfer.tick(raw.length, raw.length))
+            setDownloadedName(name)
+            setProgress(100)
+            setDecryptProgress(100)
+            return
+          }
+          downloadBlob([raw], name, mime)
+          setStats(transfer.tick(raw.length, raw.length))
+          setProgress(100)
+          setDecryptProgress(100)
+          setDownloadedName(name)
+          return
+        }
+
         if (canStream && isLarge) {
           const handle = await window.showSaveFilePicker({ suggestedName: name })
           const writable = await handle.createWritable()
           transfer.reset(contentLength)
-          const reader = response.body.getReader()
+          if (prefix.length) await writable.write(prefix)
+          const snapFirst = transfer.tick(prefix.length, contentLength)
+          if (snapFirst) {
+            setStats(snapFirst)
+            if (contentLength) setProgress(Math.min(100, Math.round((snapFirst.received / contentLength) * 100)))
+          }
           while (true) {
             const { done, value } = await reader.read()
             if (done) break
@@ -115,7 +189,7 @@ function safeName(name, fallback) {
           await writable.close()
         } else {
           transfer.reset(contentLength)
-          const buf = new Uint8Array(await response.arrayBuffer())
+          const buf = await readAll()
           setStats(transfer.tick(buf.length, buf.length))
           downloadBlob([buf], name, mime)
         }
